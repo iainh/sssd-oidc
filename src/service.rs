@@ -1,0 +1,118 @@
+use thiserror::Error;
+
+use crate::cache::Cache;
+use crate::config::Config;
+use crate::mapping::id_to_uid;
+use crate::model::{Group, User};
+use crate::scim::{ScimClient, ScimError};
+
+#[derive(Debug, Error)]
+pub enum ServiceError {
+    #[error("SCIM error: {0}")]
+    Scim(#[from] ScimError),
+    #[error("cache error: {0}")]
+    Cache(#[from] crate::cache::CacheError),
+}
+
+/// Façade used by NSS and PAM modules to resolve users and groups.
+pub struct Service {
+    scim: ScimClient,
+    cache: Cache,
+    config: Config,
+}
+
+impl Service {
+    pub fn new(config: Config, scim: ScimClient, cache: Cache) -> Self {
+        Self {
+            scim,
+            cache,
+            config,
+        }
+    }
+
+    /// Look up a user by login name. Tries SCIM first, falls back to cache.
+    pub fn lookup_user_by_name(&self, name: &str) -> Result<Option<User>, ServiceError> {
+        match self.scim.get_user_by_name(name) {
+            Ok(Some(scim_user)) => {
+                let user = self.scim_user_to_model(&scim_user);
+                self.cache.store_user(&user)?;
+                Ok(Some(user))
+            }
+            Ok(None) => Ok(self.cache.get_user_by_name(name)?),
+            Err(_) => Ok(self.cache.get_user_by_name(name)?),
+        }
+    }
+
+    /// Look up a user by UID. Checks cache first (reverse lookup), then SCIM.
+    pub fn lookup_user_by_uid(&self, uid: u32) -> Result<Option<User>, ServiceError> {
+        if let Some(cached) = self.cache.get_user_by_uid(uid)? {
+            return Ok(Some(cached));
+        }
+        // UID reverse lookup requires the cache to have been populated by a
+        // prior name-based lookup. Without a mapping table from UID→external_id,
+        // we cannot query SCIM by UID directly.
+        Ok(None)
+    }
+
+    /// Look up a group by name.
+    pub fn lookup_group_by_name(&self, name: &str) -> Result<Option<Group>, ServiceError> {
+        match self.scim.get_group_by_name(name) {
+            Ok(Some(scim_group)) => {
+                let group = self.scim_group_to_model(&scim_group);
+                self.cache.store_group(&group)?;
+                Ok(Some(group))
+            }
+            Ok(None) => Ok(self.cache.get_group_by_name(name)?),
+            Err(_) => Ok(self.cache.get_group_by_name(name)?),
+        }
+    }
+
+    /// Look up a group by GID. Checks cache first.
+    pub fn lookup_group_by_gid(&self, gid: u32) -> Result<Option<Group>, ServiceError> {
+        if let Some(cached) = self.cache.get_group_by_gid(gid)? {
+            return Ok(Some(cached));
+        }
+        Ok(None)
+    }
+
+    fn scim_user_to_model(&self, scim_user: &crate::scim::ScimUser) -> User {
+        let mc = &self.config.mapping;
+        let uid = id_to_uid(&scim_user.id, mc.uid_range_min, mc.uid_range_size);
+        // Use the first group as primary GID, or fall back to the user's own UID range.
+        let gid = if let Some(first_group) = scim_user.groups.first() {
+            id_to_uid(&first_group.value, mc.gid_range_min, mc.gid_range_size)
+        } else {
+            id_to_uid(&scim_user.id, mc.gid_range_min, mc.gid_range_size)
+        };
+        let home = self
+            .config
+            .user_defaults
+            .home_template
+            .replace("{user}", &scim_user.user_name);
+        User {
+            external_id: scim_user.id.clone(),
+            name: scim_user.user_name.clone(),
+            uid,
+            gid,
+            gecos: scim_user.display_name.clone().unwrap_or_default(),
+            home,
+            shell: self.config.user_defaults.shell.clone(),
+        }
+    }
+
+    fn scim_group_to_model(&self, scim_group: &crate::scim::ScimGroup) -> Group {
+        let mc = &self.config.mapping;
+        let gid = id_to_uid(&scim_group.id, mc.gid_range_min, mc.gid_range_size);
+        let members = scim_group
+            .members
+            .iter()
+            .filter_map(|m| m.display.clone())
+            .collect();
+        Group {
+            external_id: scim_group.id.clone(),
+            name: scim_group.display_name.clone(),
+            gid,
+            members,
+        }
+    }
+}

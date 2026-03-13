@@ -1,0 +1,23 @@
+[workspace]
+members = [".", "crates/*"]
+resolver = "3"
+
+[package]
+name = "sssd-oidc"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Shared OIDC/SCIM library for NSS and PAM modules"
+
+[dependencies]
+libc = "0.2"
+murmur3 = "0.5"
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"

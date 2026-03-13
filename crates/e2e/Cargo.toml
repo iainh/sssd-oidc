@@ -1,0 +1,16 @@
+[package]
+name = "e2e"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[dev-dependencies]
+libc = "0.2"
+nss-oidc = { path = "../nss_oidc" }
+pam-oidc = { path = "../pam_oidc" }
+serde_json = "1"
+sssd-oidc = { path = "../.." }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"

@@ -1,0 +1,14 @@
+[package]
+name = "nss-oidc"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "NSS module for OIDC/SCIM identity lookups"
+
+[lib]
+name = "nss_oidc"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+libc = "0.2"
+sssd-oidc = { path = "../.." }
