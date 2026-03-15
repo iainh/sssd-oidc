@@ -26,10 +26,11 @@ SSSD (proxy mode)
 
 | Crate | Output | Purpose |
 |---|---|---|
-| `sssd-oidc` (root) | `libsssd_oidc` | Shared library: config, SCIM client, UID mapping, cache, service façade |
-| `crates/nss_oidc` | `libnss_oidc.so` | NSS module (`_nss_oidc_getpwnam_r`, `_nss_oidc_getpwuid_r`, `_nss_oidc_getgrnam_r`, `_nss_oidc_getgrgid_r`) |
-| `crates/pam_oidc` | `pam_oidc.so` | PAM module (`pam_sm_authenticate`, `pam_sm_setcred`, `pam_sm_acct_mgmt`) |
-| `crates/e2e` | (tests only) | End-to-end tests with a mock SCIM/OIDC server (wiremock) |
+| `sssd-oidc` (root) | `libsssd_oidc` | Shared library: config, SCIM client, OIDC client, UID mapping, cache, service façade |
+| `crates/nss_oidc` | `libnss_oidc.so` | NSS module (`getpwnam_r`, `getpwuid_r`, `getgrnam_r`, `getgrgid_r`, enumeration, `initgroups_dyn`) |
+| `crates/pam_oidc` | `pam_oidc.so` | PAM module (`pam_sm_authenticate`, `pam_sm_setcred`, `pam_sm_acct_mgmt`, `pam_sm_chauthtok`) |
+| `crates/mock-idp` | `mock-idp` | Standalone mock SCIM/OIDC server for container testing |
+| `crates/e2e` | (tests only) | Integration tests with wiremock mock IdP |
 
 ## Standards implemented
 
@@ -126,12 +127,31 @@ Outputs:
 
 ## Testing
 
+### Unit and integration tests
+
 ```sh
 cargo test --workspace
 ```
 
-E2E tests use [wiremock](https://crates.io/crates/wiremock) to run a mock
-SCIM/OIDC server — no real IdP required.
+Integration tests in `crates/e2e` use [wiremock](https://crates.io/crates/wiremock)
+to run a mock SCIM/OIDC server — no real IdP required.
+
+### Container end-to-end tests
+
+```sh
+./test/e2e-container-test.sh
+```
+
+Builds the full container image with NSS/PAM modules installed, starts a mock
+IdP sidecar, and runs 22 tests covering:
+
+- NSS lookups (by name, UID/GID, enumeration, group membership, initgroups)
+- PAM account management (active users permitted, inactive users denied)
+- Offline cache fallback (user/group resolution when the IdP is down)
+- SSH login (pubkey auth + PAM account check for OIDC-resolved users)
+- Deterministic UID mapping and passwd field format validation
+
+Requires Docker (with Compose) or Podman (with podman-compose).
 
 ## Implementation status
 
@@ -142,11 +162,19 @@ SCIM/OIDC server — no real IdP required.
 | UID/GID deterministic mapping | ✅ Complete |
 | SQLite cache (store/reverse lookup) | ✅ Complete |
 | Service façade (SCIM → model + cache) | ✅ Complete |
-| NSS FFI exports (`getpwnam_r`, etc.) | 🔲 Stubs (wired, not connected to service) |
-| PAM FFI exports (`pam_sm_authenticate`) | 🔲 Stubs (device code flow not yet implemented) |
-| OIDC device code authentication | 🔲 Not started |
-| Access control (SCIM `active` flag) | 🔲 Not started |
-| Enumeration (`setpwent`/`getpwent`) | 🔲 Not started |
+| NSS passwd FFI (`getpwnam_r`, `getpwuid_r`) | ✅ Complete |
+| NSS group FFI (`getgrnam_r`, `getgrgid_r`) | ✅ Complete |
+| NSS enumeration (`setpwent`/`getpwent`/`setgrent`/`getgrent`) | ✅ Complete |
+| NSS initgroups (`initgroups_dyn`) | ✅ Complete |
+| OIDC discovery | ✅ Complete |
+| OIDC device code authentication (RFC 8628) | ✅ Complete |
+| PAM authenticate (`pam_sm_authenticate`) | ✅ Complete |
+| PAM account management (`pam_sm_acct_mgmt`) | ✅ Complete |
+| PAM password change (`pam_sm_chauthtok`) | ✅ Complete (redirects to IdP) |
+| Offline cache fallback | ✅ Complete |
+| Mock IdP (standalone binary) | ✅ Complete |
+| Container build (Containerfile) | ✅ Complete |
+| E2E container test suite | ✅ Complete (22 tests incl. SSH login) |
 
 ## Research
 
@@ -155,4 +183,5 @@ architecture decision record.
 
 ## Licence
 
-TBD
+This project is licensed under the [GNU General Public License v2.0 or later](LICENSE)
+(SPDX: `GPL-2.0-or-later`).
