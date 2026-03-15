@@ -37,12 +37,6 @@ pub unsafe extern "C" fn pam_sm_authenticate(
 fn authenticate_impl(pamh: *mut PamHandle) -> c_int {
     sssd_oidc::logging::init("pam_oidc", sssd_oidc::logging::FACILITY_AUTHPRIV);
 
-    use sssd_oidc::cache::Cache;
-    use sssd_oidc::config::Config;
-    use sssd_oidc::oidc::OidcClient;
-    use sssd_oidc::scim::ScimClient;
-    use sssd_oidc::service::Service;
-
     let username = match unsafe { crate::pam_conv::get_pam_user(pamh) } {
         Ok(u) => u,
         Err(e) => {
@@ -53,24 +47,9 @@ fn authenticate_impl(pamh: *mut PamHandle) -> c_int {
 
     info!(user = %username, "pam_sm_authenticate");
 
-    let config = match Config::load() {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(error = %e, "failed to load config");
-            return PAM_AUTHINFO_UNAVAIL;
-        }
-    };
-
-    let client = match OidcClient::discover(
-        &config.oidc.issuer_url,
-        &config.oidc.client_id,
-        config.oidc.client_secret.as_deref(),
-    ) {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(error = %e, "OIDC discovery failed");
-            return PAM_AUTHINFO_UNAVAIL;
-        }
+    let client = match crate::state::get_oidc_client() {
+        Some(c) => c,
+        None => return PAM_AUTHINFO_UNAVAIL,
     };
 
     let result = client.authenticate_device_flow("openid", |user_code, verification_uri| {
@@ -112,15 +91,11 @@ fn authenticate_impl(pamh: *mut PamHandle) -> c_int {
                 return PAM_SUCCESS;
             }
 
-            let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
-            let cache = match Cache::open(&config.cache.db_path, config.cache.ttl_seconds) {
-                Ok(c) => c,
-                Err(e) => {
-                    warn!(error = %e, "failed to open cache for subject verification");
-                    return PAM_AUTH_ERR;
-                }
+            let svc_mutex = match crate::state::get_service() {
+                Some(m) => m,
+                None => return PAM_AUTH_ERR,
             };
-            let svc = Service::new(config, scim, cache);
+            let svc = svc_mutex.lock().unwrap_or_else(|e| e.into_inner());
 
             match svc.lookup_user_by_name(&username) {
                 Ok(Some(user)) if user.external_id == *sub => {
@@ -192,17 +167,15 @@ fn chauthtok_impl(pamh: *mut PamHandle) -> c_int {
     sssd_oidc::logging::init("pam_oidc", sssd_oidc::logging::FACILITY_AUTHPRIV);
     info!("pam_sm_chauthtok: redirecting to IdP");
 
-    use sssd_oidc::config::Config;
-
-    let config = match Config::load() {
-        Ok(c) => c,
-        Err(_) => return PAM_AUTHTOK_ERR,
+    let issuer = match crate::state::get_oidc_client() {
+        Some(c) => c.endpoints().issuer.clone(),
+        None => return PAM_AUTHTOK_ERR,
     };
 
     let msg = format!(
         "Password changes are not supported via PAM for OIDC accounts.\n\
          Please change your password at your identity provider:\n  {}",
-        config.oidc.issuer_url
+        issuer
     );
     unsafe {
         crate::pam_conv::pam_info(pamh, &msg);
@@ -234,11 +207,6 @@ pub unsafe extern "C" fn pam_sm_acct_mgmt(
 fn acct_mgmt_impl(pamh: *mut PamHandle) -> c_int {
     sssd_oidc::logging::init("pam_oidc", sssd_oidc::logging::FACILITY_AUTHPRIV);
 
-    use sssd_oidc::cache::Cache;
-    use sssd_oidc::config::Config;
-    use sssd_oidc::scim::ScimClient;
-    use sssd_oidc::service::Service;
-
     let username = match unsafe { crate::pam_conv::get_pam_user(pamh) } {
         Ok(u) => u,
         Err(e) => {
@@ -249,23 +217,11 @@ fn acct_mgmt_impl(pamh: *mut PamHandle) -> c_int {
 
     info!(user = %username, "pam_sm_acct_mgmt");
 
-    let config = match Config::load() {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(error = %e, "failed to load config");
-            return PAM_AUTHINFO_UNAVAIL;
-        }
+    let svc_mutex = match crate::state::get_service() {
+        Some(m) => m,
+        None => return PAM_AUTHINFO_UNAVAIL,
     };
-
-    let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
-    let cache = match Cache::open(&config.cache.db_path, config.cache.ttl_seconds) {
-        Ok(c) => c,
-        Err(e) => {
-            warn!(error = %e, "failed to open cache");
-            return PAM_AUTHINFO_UNAVAIL;
-        }
-    };
-    let svc = Service::new(config, scim, cache);
+    let svc = svc_mutex.lock().unwrap_or_else(|e| e.into_inner());
 
     match svc.check_user_active(&username) {
         Ok(true) => {
