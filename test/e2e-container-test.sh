@@ -132,16 +132,164 @@ test_offline_fallback() {
     echo "$result" | grep -q "alice"
 }
 
+# --- Test 11: getent group <GID> (reverse lookup) ---
+test_getent_group_gid() {
+    local group_line gid result
+    group_line=$($COMPOSE exec -T sssd-oidc getent group engineering 2>&1)
+    gid=$(echo "$group_line" | cut -d: -f3)
+    echo "  engineering GID = $gid"
+    result=$($COMPOSE exec -T sssd-oidc getent group "$gid" 2>&1)
+    echo "  getent group $gid → $result"
+    echo "$result" | grep -q "engineering"
+}
+
+# --- Test 12: getent group (enumerate all groups) ---
+test_getent_group_enumerate() {
+    local result
+    result=$($COMPOSE exec -T sssd-oidc getent group 2>&1)
+    echo "  getent group output (last 5 lines):"
+    echo "$result" | tail -5 | sed 's/^/    /'
+    echo "$result" | grep -q "engineering"
+}
+
+# --- Test 13: Group membership includes alice ---
+test_group_membership() {
+    local result members
+    result=$($COMPOSE exec -T sssd-oidc getent group engineering 2>&1)
+    echo "  getent group engineering → $result"
+    members=$(echo "$result" | cut -d: -f4)
+    echo "  members field = $members"
+    echo "$members" | grep -q "alice"
+}
+
+# --- Test 14: Non-existent user returns nothing ---
+test_nonexistent_user() {
+    if $COMPOSE exec -T sssd-oidc getent passwd nonexistent_user_xyz 2>&1 | grep -q "nonexistent_user_xyz"; then
+        echo "  ERROR: non-existent user should not resolve"
+        return 1
+    else
+        echo "  Correctly returned nothing for non-existent user"
+        return 0
+    fi
+}
+
+# --- Test 15: Non-existent group returns nothing ---
+test_nonexistent_group() {
+    if $COMPOSE exec -T sssd-oidc getent group nonexistent_group_xyz 2>&1 | grep -q "nonexistent_group_xyz"; then
+        echo "  ERROR: non-existent group should not resolve"
+        return 1
+    else
+        echo "  Correctly returned nothing for non-existent group"
+        return 0
+    fi
+}
+
+# --- Test 16: Inactive user still resolves via NSS ---
+test_inactive_user_resolves_nss() {
+    local result
+    result=$($COMPOSE exec -T sssd-oidc getent passwd disabled_bob 2>&1)
+    echo "  getent passwd disabled_bob → $result"
+    echo "$result" | grep -q "disabled_bob"
+}
+
+# --- Test 17: id alice shows supplementary groups (initgroups_dyn) ---
+test_id_alice_groups() {
+    local result
+    result=$($COMPOSE exec -T sssd-oidc id alice 2>&1)
+    echo "  id alice → $result"
+    echo "$result" | grep -q "engineering"
+}
+
+# --- Test 18: Offline group fallback ---
+test_offline_group_fallback() {
+    # First, ensure engineering is cached
+    $COMPOSE exec -T sssd-oidc getent group engineering >/dev/null 2>&1
+
+    # Stop the mock IdP
+    $COMPOSE stop mock-idp
+
+    # engineering should still resolve from cache
+    local result
+    result=$($COMPOSE exec -T sssd-oidc getent group engineering 2>&1)
+    echo "  Offline getent group engineering → $result"
+
+    # Restart mock IdP for subsequent tests
+    $COMPOSE start mock-idp
+    sleep 2
+
+    echo "$result" | grep -q "engineering"
+}
+
+# --- Test 19: Non-existent user still fails offline ---
+test_offline_nonexistent_user() {
+    # Ensure cache is populated with known users
+    $COMPOSE exec -T sssd-oidc getent passwd alice >/dev/null 2>&1
+
+    # Stop the mock IdP
+    $COMPOSE stop mock-idp
+
+    # Non-existent user should still not resolve
+    if $COMPOSE exec -T sssd-oidc getent passwd nonexistent_user_xyz 2>&1 | grep -q "nonexistent_user_xyz"; then
+        # Restart mock IdP
+        $COMPOSE start mock-idp
+        sleep 2
+        echo "  ERROR: non-existent user should not resolve offline"
+        return 1
+    else
+        echo "  Correctly returned nothing for non-existent user offline"
+        # Restart mock IdP
+        $COMPOSE start mock-idp
+        sleep 2
+        return 0
+    fi
+}
+
+# --- Test 20: UID is deterministic across lookups ---
+test_uid_deterministic() {
+    local uid1 uid2
+    uid1=$($COMPOSE exec -T sssd-oidc getent passwd alice 2>&1 | cut -d: -f3)
+    uid2=$($COMPOSE exec -T sssd-oidc getent passwd alice 2>&1 | cut -d: -f3)
+    echo "  First lookup UID  = $uid1"
+    echo "  Second lookup UID = $uid2"
+    [ "$uid1" = "$uid2" ]
+}
+
+# --- Test 21: Passwd field format is correct ---
+test_passwd_field_format() {
+    local result
+    result=$($COMPOSE exec -T sssd-oidc getent passwd alice 2>&1)
+    echo "  getent passwd alice → $result"
+    # Format: alice:x:<uid>:<gid>:Alice Smith:/home/alice:/bin/bash
+    echo "$result" | grep -qE '^alice:x:[0-9]+:[0-9]+:Alice Smith:/home/alice:/bin/bash$'
+}
+
+# --- Test 22: Config file is present ---
+test_config_present() {
+    $COMPOSE exec -T sssd-oidc test -f /etc/sssd-oidc/config.toml
+}
+
 run_test "NSS .so installed"                test_nss_so_installed
 run_test "PAM .so installed"                test_pam_so_installed
 run_test "nsswitch.conf has oidc"           test_nsswitch
+run_test "Config file present"              test_config_present
 run_test "getent passwd alice"              test_getent_passwd_alice
 run_test "getent group engineering"         test_getent_group_engineering
 run_test "getent passwd <UID> (reverse)"    test_getent_passwd_uid
+run_test "getent group <GID> (reverse)"     test_getent_group_gid
 run_test "getent passwd (enumerate)"        test_getent_passwd_enumerate
+run_test "getent group (enumerate)"         test_getent_group_enumerate
+run_test "Group membership includes alice"  test_group_membership
+run_test "Non-existent user"                test_nonexistent_user
+run_test "Non-existent group"               test_nonexistent_group
+run_test "Inactive user resolves (NSS)"     test_inactive_user_resolves_nss
 run_test "Inactive user denied (PAM)"       test_inactive_user_denied
 run_test "Active user passes acct_mgmt"     test_active_user_acct_mgmt
+run_test "id alice (initgroups)"            test_id_alice_groups
+run_test "UID is deterministic"             test_uid_deterministic
+run_test "Passwd field format"              test_passwd_field_format
 run_test "Offline cache fallback"           test_offline_fallback
+run_test "Offline group fallback"           test_offline_group_fallback
+run_test "Offline non-existent user fails"  test_offline_nonexistent_user
 
 echo ""
 echo "==========================================="
