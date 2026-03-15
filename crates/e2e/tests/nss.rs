@@ -215,6 +215,42 @@ async fn acct_mgmt_falls_back_to_cache_on_scim_error() {
     assert!(active);
 }
 
+/// Health check: SCIM endpoint is reachable.
+#[tokio::test(flavor = "multi_thread")]
+async fn is_online_returns_true_when_scim_reachable() {
+    let idp = MockIdp::start().await;
+    let base = idp.base_url();
+    let svc = tokio::task::spawn_blocking({
+        let base = base.clone();
+        move || make_service(&base, &base)
+    })
+    .await
+    .unwrap();
+
+    let online = tokio::task::spawn_blocking(move || svc.is_online())
+        .await
+        .unwrap();
+    assert!(online);
+}
+
+/// Health check: SCIM endpoint unreachable.
+#[tokio::test(flavor = "multi_thread")]
+async fn is_online_returns_false_when_scim_unreachable() {
+    let (_config_file, config) = test_config("http://127.0.0.1:1", "http://127.0.0.1:1");
+    let svc = tokio::task::spawn_blocking(move || {
+        let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
+        let cache = Cache::open_in_memory().unwrap();
+        Service::new(config, scim, cache)
+    })
+    .await
+    .unwrap();
+
+    let online = tokio::task::spawn_blocking(move || svc.is_online())
+        .await
+        .unwrap();
+    assert!(!online);
+}
+
 /// initgroups: look up supplementary groups for a user.
 #[tokio::test(flavor = "multi_thread")]
 async fn initgroups_returns_supplementary_gids() {

@@ -119,6 +119,11 @@ impl Service {
         }
     }
 
+    /// Check if the SCIM backend is reachable.
+    pub fn is_online(&self) -> bool {
+        self.scim.is_online()
+    }
+
     /// Look up all groups a user belongs to by login name.
     /// Returns the GIDs from the user's SCIM `groups` attribute.
     pub fn lookup_groups_for_user(&self, name: &str) -> Result<Vec<u32>, ServiceError> {

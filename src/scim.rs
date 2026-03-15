@@ -179,6 +179,18 @@ impl ScimClient {
         self.paginate_list::<ScimGroup>("Groups")
     }
 
+    /// Check if the SCIM endpoint is reachable (health check).
+    /// Makes a lightweight request to the Users endpoint with count=0.
+    pub fn is_online(&self) -> bool {
+        let url = format!("{}/Users?count=0", self.base_url);
+        self.http
+            .get(&url)
+            .bearer_auth(&self.bearer_token)
+            .send()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+    }
+
     /// Generic paginated list for a SCIM resource type.
     fn paginate_list<T: serde::de::DeserializeOwned>(
         &self,

@@ -142,6 +142,18 @@ impl MockIdp {
             .mount(&server)
             .await;
 
+        // SCIM: GET /Users?count=0 (health check)
+        Mock::given(method("GET"))
+            .and(path("/Users"))
+            .and(query_param("count", "0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+                "totalResults": 2,
+                "Resources": []
+            })))
+            .mount(&server)
+            .await;
+
         // OIDC: GET /.well-known/openid-configuration
         let issuer = server.uri();
         Mock::given(method("GET"))
