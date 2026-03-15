@@ -12,13 +12,16 @@ RUN apt-get update && apt-get install -y \
         sssd sssd-proxy libpam-runtime libpam-modules pamtester curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Detect multiarch lib directory (works on both x86_64 and aarch64)
+RUN echo "/usr/lib/$(uname -m)-linux-gnu" > /tmp/libdir
+
 # Install NSS module (glibc looks for libnss_<name>.so.2)
-COPY --from=builder /build/target/release/libnss_oidc.so \
-     /usr/lib/x86_64-linux-gnu/libnss_oidc.so.2
+COPY --from=builder /build/target/release/libnss_oidc.so /tmp/libnss_oidc.so
+RUN cp /tmp/libnss_oidc.so "$(cat /tmp/libdir)/libnss_oidc.so.2"
 
 # Install PAM module
-COPY --from=builder /build/target/release/libpam_oidc.so \
-     /usr/lib/x86_64-linux-gnu/security/pam_oidc.so
+COPY --from=builder /build/target/release/libpam_oidc.so /tmp/libpam_oidc.so
+RUN cp /tmp/libpam_oidc.so "$(cat /tmp/libdir)/security/pam_oidc.so"
 
 # Install mock-idp binary (used when running standalone tests)
 COPY --from=builder /build/target/release/mock-idp /usr/local/bin/mock-idp

@@ -37,21 +37,21 @@ run_test() {
     echo "=== Test: $name ==="
     if "$@"; then
         echo "  PASS: $name"
-        ((PASSED++))
+        PASSED=$((PASSED + 1))
     else
         echo "  FAIL: $name"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
     fi
 }
 
 # --- Test 1: NSS .so files are installed ---
 test_nss_so_installed() {
-    $COMPOSE exec -T sssd-oidc test -f /usr/lib/x86_64-linux-gnu/libnss_oidc.so.2
+    $COMPOSE exec -T sssd-oidc sh -c 'test -f /usr/lib/$(uname -m)-linux-gnu/libnss_oidc.so.2'
 }
 
 # --- Test 2: PAM .so file is installed ---
 test_pam_so_installed() {
-    $COMPOSE exec -T sssd-oidc test -f /usr/lib/x86_64-linux-gnu/security/pam_oidc.so
+    $COMPOSE exec -T sssd-oidc sh -c 'test -f /usr/lib/$(uname -m)-linux-gnu/security/pam_oidc.so'
 }
 
 # --- Test 3: nsswitch.conf references oidc ---
