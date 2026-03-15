@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use thiserror::Error;
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Error)]
 pub enum OidcError {
@@ -79,6 +80,7 @@ impl OidcClient {
         client_id: &str,
         client_secret: Option<&str>,
     ) -> Result<Self, OidcError> {
+        info!(issuer_url, "discovering OIDC endpoints");
         let url = format!(
             "{}/.well-known/openid-configuration",
             issuer_url.trim_end_matches('/')
@@ -96,6 +98,7 @@ impl OidcClient {
             .device_authorization_endpoint
             .ok_or_else(|| OidcError::MissingField("device_authorization_endpoint".into()))?;
 
+        info!(issuer = issuer, "OIDC discovery complete");
         Ok(Self {
             http,
             endpoints: OidcEndpoints {
@@ -116,6 +119,7 @@ impl OidcClient {
     /// Step 1: Request a device code from the device authorization endpoint.
     /// POST to device_authorization_endpoint with client_id + scope.
     pub fn request_device_code(&self, scope: &str) -> Result<DeviceAuthResponse, OidcError> {
+        info!(scope, "requesting device code");
         let mut form = vec![("client_id", self.client_id.as_str()), ("scope", scope)];
         if let Some(ref secret) = self.client_secret {
             form.push(("client_secret", secret.as_str()));
@@ -138,6 +142,7 @@ impl OidcClient {
     /// Returns `Err(OidcError::SlowDown)` if polling too fast.
     /// Returns `Err(OidcError::ExpiredToken)` if the code expired.
     pub fn poll_for_token(&self, device_code: &str) -> Result<TokenResponse, OidcError> {
+        debug!("polling for token");
         let mut form = vec![
             ("client_id", self.client_id.as_str()),
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
@@ -183,6 +188,7 @@ impl OidcClient {
     where
         F: FnOnce(&str, &str),
     {
+        info!("starting device code authentication flow");
         let device_auth = self.request_device_code(scope)?;
 
         display_fn(&device_auth.user_code, &device_auth.verification_uri);
@@ -195,14 +201,21 @@ impl OidcClient {
             std::thread::sleep(interval);
 
             if std::time::Instant::now() >= deadline {
+                warn!("device code expired");
                 return Err(OidcError::ExpiredToken);
             }
 
             match self.poll_for_token(&device_auth.device_code) {
-                Ok(token) => return Ok(token),
-                Err(OidcError::AuthorizationPending) => continue,
+                Ok(token) => {
+                    info!("device code authentication successful");
+                    return Ok(token);
+                }
+                Err(OidcError::AuthorizationPending) => {
+                    debug!("authorization pending, waiting");
+                    continue;
+                }
                 Err(OidcError::SlowDown) => {
-                    // Back off by sleeping an extra interval
+                    debug!("slowing down polling interval");
                     std::thread::sleep(interval);
                     continue;
                 }

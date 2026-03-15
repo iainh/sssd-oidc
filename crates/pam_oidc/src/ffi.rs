@@ -1,4 +1,6 @@
 use libc::c_int;
+#[cfg(target_os = "linux")]
+use tracing::{info, warn};
 
 /// PAM return codes (from <security/pam_modules.h>).
 pub const PAM_SUCCESS: c_int = 0;
@@ -33,17 +35,27 @@ pub unsafe extern "C" fn pam_sm_authenticate(
 
 #[cfg(target_os = "linux")]
 fn authenticate_impl(pamh: *mut PamHandle) -> c_int {
+    sssd_oidc::logging::init("pam_oidc", sssd_oidc::logging::FACILITY_AUTHPRIV);
+
     use sssd_oidc::config::Config;
     use sssd_oidc::oidc::OidcClient;
 
     let username = match unsafe { crate::pam_conv::get_pam_user(pamh) } {
         Ok(u) => u,
-        Err(_) => return PAM_AUTH_ERR,
+        Err(e) => {
+            warn!(error = e, "failed to get PAM user");
+            return PAM_AUTH_ERR;
+        }
     };
+
+    info!(user = %username, "pam_sm_authenticate");
 
     let config = match Config::load() {
         Ok(c) => c,
-        Err(_) => return PAM_AUTHINFO_UNAVAIL,
+        Err(e) => {
+            warn!(error = %e, "failed to load config");
+            return PAM_AUTHINFO_UNAVAIL;
+        }
     };
 
     let client = match OidcClient::discover(
@@ -52,7 +64,10 @@ fn authenticate_impl(pamh: *mut PamHandle) -> c_int {
         config.oidc.client_secret.as_deref(),
     ) {
         Ok(c) => c,
-        Err(_) => return PAM_AUTHINFO_UNAVAIL,
+        Err(e) => {
+            warn!(error = %e, "OIDC discovery failed");
+            return PAM_AUTHINFO_UNAVAIL;
+        }
     };
 
     let result = client.authenticate_device_flow("openid", |user_code, verification_uri| {
@@ -67,10 +82,13 @@ fn authenticate_impl(pamh: *mut PamHandle) -> c_int {
     match result {
         Ok(_token) => {
             // TODO: optionally verify token subject matches username
-            let _ = &username;
+            info!(user = %username, "authentication successful");
             PAM_SUCCESS
         }
-        Err(_) => PAM_AUTH_ERR,
+        Err(e) => {
+            warn!(user = %username, error = %e, "authentication failed");
+            PAM_AUTH_ERR
+        }
     }
 }
 
@@ -115,6 +133,9 @@ pub unsafe extern "C" fn pam_sm_chauthtok(
 
 #[cfg(target_os = "linux")]
 fn chauthtok_impl(pamh: *mut PamHandle) -> c_int {
+    sssd_oidc::logging::init("pam_oidc", sssd_oidc::logging::FACILITY_AUTHPRIV);
+    info!("pam_sm_chauthtok: redirecting to IdP");
+
     use sssd_oidc::config::Config;
 
     let config = match Config::load() {
@@ -155,6 +176,8 @@ pub unsafe extern "C" fn pam_sm_acct_mgmt(
 
 #[cfg(target_os = "linux")]
 fn acct_mgmt_impl(pamh: *mut PamHandle) -> c_int {
+    sssd_oidc::logging::init("pam_oidc", sssd_oidc::logging::FACILITY_AUTHPRIV);
+
     use sssd_oidc::cache::Cache;
     use sssd_oidc::config::Config;
     use sssd_oidc::scim::ScimClient;
@@ -162,25 +185,45 @@ fn acct_mgmt_impl(pamh: *mut PamHandle) -> c_int {
 
     let username = match unsafe { crate::pam_conv::get_pam_user(pamh) } {
         Ok(u) => u,
-        Err(_) => return PAM_AUTH_ERR,
+        Err(e) => {
+            warn!(error = e, "failed to get PAM user");
+            return PAM_AUTH_ERR;
+        }
     };
+
+    info!(user = %username, "pam_sm_acct_mgmt");
 
     let config = match Config::load() {
         Ok(c) => c,
-        Err(_) => return PAM_AUTHINFO_UNAVAIL,
+        Err(e) => {
+            warn!(error = %e, "failed to load config");
+            return PAM_AUTHINFO_UNAVAIL;
+        }
     };
 
     let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
     let cache = match Cache::open(&config.cache.db_path) {
         Ok(c) => c,
-        Err(_) => return PAM_AUTHINFO_UNAVAIL,
+        Err(e) => {
+            warn!(error = %e, "failed to open cache");
+            return PAM_AUTHINFO_UNAVAIL;
+        }
     };
     let svc = Service::new(config, scim, cache);
 
     match svc.check_user_active(&username) {
-        Ok(true) => PAM_SUCCESS,
-        Ok(false) => PAM_PERM_DENIED,
-        Err(_) => PAM_AUTHINFO_UNAVAIL,
+        Ok(true) => {
+            info!(user = %username, "account permitted");
+            PAM_SUCCESS
+        }
+        Ok(false) => {
+            warn!(user = %username, "account denied (inactive)");
+            PAM_PERM_DENIED
+        }
+        Err(e) => {
+            warn!(user = %username, error = %e, "account check failed");
+            PAM_AUTHINFO_UNAVAIL
+        }
     }
 }
 

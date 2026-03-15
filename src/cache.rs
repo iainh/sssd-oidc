@@ -1,5 +1,6 @@
 use rusqlite::Connection;
 use thiserror::Error;
+use tracing::{debug, info, trace};
 
 use crate::model::{Group, User};
 
@@ -17,6 +18,7 @@ pub struct Cache {
 impl Cache {
     /// Open (or create) the cache database at the given path.
     pub fn open(path: &str) -> Result<Self, CacheError> {
+        info!(path, "opening cache database");
         let conn = Connection::open(path)?;
         conn.execute_batch(
             "
@@ -58,6 +60,7 @@ impl Cache {
 
     /// Store a user in the cache.
     pub fn store_user(&self, user: &User) -> Result<(), CacheError> {
+        trace!(name = user.name, uid = user.uid, "caching user");
         self.conn.execute(
             "INSERT OR REPLACE INTO uid_cache
                 (external_id, login, uid, gecos, home, shell, gid, active, cached_at)
@@ -95,8 +98,14 @@ impl Cache {
             })
         })?;
         match rows.next() {
-            Some(row) => Ok(Some(row?)),
-            None => Ok(None),
+            Some(row) => {
+                trace!(uid, "cache hit for user by uid");
+                Ok(Some(row?))
+            }
+            None => {
+                trace!(uid, "cache miss for user by uid");
+                Ok(None)
+            }
         }
     }
 
@@ -119,13 +128,20 @@ impl Cache {
             })
         })?;
         match rows.next() {
-            Some(row) => Ok(Some(row?)),
-            None => Ok(None),
+            Some(row) => {
+                trace!(name, "cache hit for user by name");
+                Ok(Some(row?))
+            }
+            None => {
+                trace!(name, "cache miss for user by name");
+                Ok(None)
+            }
         }
     }
 
     /// Store a group in the cache, including its member list.
     pub fn store_group(&self, group: &Group) -> Result<(), CacheError> {
+        trace!(name = group.name, gid = group.gid, "caching group");
         self.conn.execute(
             "INSERT OR REPLACE INTO gid_cache
                 (external_id, name, gid, cached_at)
@@ -160,11 +176,15 @@ impl Cache {
         })?;
         match rows.next() {
             Some(row) => {
+                trace!(gid, "cache hit for group by gid");
                 let mut group = row?;
                 group.members = self.get_group_members(&group.external_id)?;
                 Ok(Some(group))
             }
-            None => Ok(None),
+            None => {
+                trace!(gid, "cache miss for group by gid");
+                Ok(None)
+            }
         }
     }
 
@@ -183,16 +203,21 @@ impl Cache {
         })?;
         match rows.next() {
             Some(row) => {
+                trace!(name, "cache hit for group by name");
                 let mut group = row?;
                 group.members = self.get_group_members(&group.external_id)?;
                 Ok(Some(group))
             }
-            None => Ok(None),
+            None => {
+                trace!(name, "cache miss for group by name");
+                Ok(None)
+            }
         }
     }
 
     /// Purge cache entries older than `ttl_seconds`.
     pub fn purge_expired(&self, ttl_seconds: u64) -> Result<(), CacheError> {
+        debug!(ttl_seconds, "purging expired cache entries");
         self.conn.execute(
             "DELETE FROM group_members WHERE group_external_id IN
                 (SELECT external_id FROM gid_cache

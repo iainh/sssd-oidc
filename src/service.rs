@@ -1,4 +1,5 @@
 use thiserror::Error;
+use tracing::{debug, info, warn};
 
 use crate::cache::Cache;
 use crate::config::Config;
@@ -32,19 +33,28 @@ impl Service {
 
     /// Look up a user by login name. Tries SCIM first, falls back to cache.
     pub fn lookup_user_by_name(&self, name: &str) -> Result<Option<User>, ServiceError> {
+        debug!(name, "looking up user by name");
         match self.scim.get_user_by_name(name) {
             Ok(Some(scim_user)) => {
                 let user = self.scim_user_to_model(&scim_user);
                 self.cache.store_user(&user)?;
+                debug!(name, uid = user.uid, "user resolved via SCIM");
                 Ok(Some(user))
             }
-            Ok(None) => Ok(self.cache.get_user_by_name(name)?),
-            Err(_) => Ok(self.cache.get_user_by_name(name)?),
+            Ok(None) => {
+                debug!(name, "user not found in SCIM, checking cache");
+                Ok(self.cache.get_user_by_name(name)?)
+            }
+            Err(e) => {
+                warn!(name, error = %e, "SCIM lookup failed, falling back to cache");
+                Ok(self.cache.get_user_by_name(name)?)
+            }
         }
     }
 
     /// Look up a user by UID. Checks cache first (reverse lookup), then SCIM.
     pub fn lookup_user_by_uid(&self, uid: u32) -> Result<Option<User>, ServiceError> {
+        debug!(uid, "looking up user by uid");
         if let Some(cached) = self.cache.get_user_by_uid(uid)? {
             return Ok(Some(cached));
         }
@@ -56,6 +66,7 @@ impl Service {
 
     /// Look up a group by name.
     pub fn lookup_group_by_name(&self, name: &str) -> Result<Option<Group>, ServiceError> {
+        debug!(name, "looking up group by name");
         match self.scim.get_group_by_name(name) {
             Ok(Some(scim_group)) => {
                 let group = self.scim_group_to_model(&scim_group);
@@ -63,12 +74,16 @@ impl Service {
                 Ok(Some(group))
             }
             Ok(None) => Ok(self.cache.get_group_by_name(name)?),
-            Err(_) => Ok(self.cache.get_group_by_name(name)?),
+            Err(e) => {
+                warn!(name, error = %e, "SCIM group lookup failed, falling back to cache");
+                Ok(self.cache.get_group_by_name(name)?)
+            }
         }
     }
 
     /// Look up a group by GID. Checks cache first.
     pub fn lookup_group_by_gid(&self, gid: u32) -> Result<Option<Group>, ServiceError> {
+        debug!(gid, "looking up group by gid");
         if let Some(cached) = self.cache.get_group_by_gid(gid)? {
             return Ok(Some(cached));
         }
@@ -84,6 +99,7 @@ impl Service {
             self.cache.store_user(&user)?;
             users.push(user);
         }
+        info!(count = users.len(), "listed all users from SCIM");
         Ok(users)
     }
 
@@ -96,6 +112,7 @@ impl Service {
             self.cache.store_group(&group)?;
             groups.push(group);
         }
+        info!(count = groups.len(), "listed all groups from SCIM");
         Ok(groups)
     }
 
@@ -106,11 +123,12 @@ impl Service {
             Ok(Some(scim_user)) => {
                 let user = self.scim_user_to_model(&scim_user);
                 self.cache.store_user(&user)?;
+                debug!(name, active = user.active, "user active status");
                 Ok(user.active)
             }
             Ok(None) => Ok(false), // user not found → not active
-            Err(_) => {
-                // SCIM unreachable — fall back to cache
+            Err(e) => {
+                warn!(name, error = %e, "SCIM active check failed, falling back to cache");
                 match self.cache.get_user_by_name(name)? {
                     Some(user) => Ok(user.active),
                     None => Ok(false),
@@ -142,9 +160,8 @@ impl Service {
                 Ok(gids)
             }
             Ok(None) => Ok(Vec::new()),
-            Err(_) => {
-                // Fall back to cache — but cache doesn't store group memberships per user,
-                // so return empty if SCIM is unreachable.
+            Err(e) => {
+                warn!(name, error = %e, "SCIM group membership lookup failed, falling back to cache");
                 Ok(Vec::new())
             }
         }

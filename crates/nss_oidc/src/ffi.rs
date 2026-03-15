@@ -6,6 +6,8 @@ use crate::group::fill_group;
 use crate::passwd::fill_passwd;
 use crate::state::get_service;
 
+use tracing::{trace, warn};
+
 /// Enumeration state for setpwent/getpwent_r/endpwent cycle.
 static USER_ENUM: Mutex<Option<(Vec<sssd_oidc::model::User>, usize)>> = Mutex::new(None);
 /// Enumeration state for setgrent/getgrent_r/endgrent cycle.
@@ -113,6 +115,7 @@ pub unsafe extern "C" fn _nss_oidc_initgroups_dyn(
             return NssStatus::NotFound;
         }
     };
+    trace!(user = user_str, "initgroups_dyn");
 
     let svc = match get_service() {
         Some(s) => s,
@@ -131,7 +134,8 @@ pub unsafe extern "C" fn _nss_oidc_initgroups_dyn(
 
     let gids = match svc.lookup_groups_for_user(user_str) {
         Ok(g) => g,
-        Err(_) => {
+        Err(e) => {
+            warn!(user = user_str, error = %e, "initgroups lookup failed");
             unsafe { *errnop = 0 };
             return NssStatus::Unavail;
         }
@@ -180,6 +184,7 @@ pub unsafe extern "C" fn _nss_oidc_initgroups_dyn(
 /// Begin user enumeration: fetch all users from SCIM.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_oidc_setpwent() -> NssStatus {
+    trace!("setpwent");
     let svc = match get_service() {
         Some(s) => s,
         None => return NssStatus::Unavail,
@@ -195,7 +200,10 @@ pub unsafe extern "C" fn _nss_oidc_setpwent() -> NssStatus {
             }
             NssStatus::Success
         }
-        Err(_) => NssStatus::Unavail,
+        Err(e) => {
+            warn!(error = %e, "setpwent failed");
+            NssStatus::Unavail
+        }
     }
 }
 
@@ -251,6 +259,7 @@ pub unsafe extern "C" fn _nss_oidc_endpwent() -> NssStatus {
 /// Begin group enumeration: fetch all groups from SCIM.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_oidc_setgrent() -> NssStatus {
+    trace!("setgrent");
     let svc = match get_service() {
         Some(s) => s,
         None => return NssStatus::Unavail,
@@ -266,7 +275,10 @@ pub unsafe extern "C" fn _nss_oidc_setgrent() -> NssStatus {
             }
             NssStatus::Success
         }
-        Err(_) => NssStatus::Unavail,
+        Err(e) => {
+            warn!(error = %e, "setgrent failed");
+            NssStatus::Unavail
+        }
     }
 }
 

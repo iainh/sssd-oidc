@@ -13,3 +13,4 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 libc = "0.2"
 sssd-oidc = { path = "../.." }
+tracing = "0.1"

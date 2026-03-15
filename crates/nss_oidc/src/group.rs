@@ -6,6 +6,8 @@ pub(crate) mod fill_group {
     use crate::passwd::fill_passwd::write_str;
     use crate::state::get_service;
 
+    use tracing::{trace, warn};
+
     /// Look up a group by name and fill the group struct.
     ///
     /// # Safety
@@ -25,6 +27,7 @@ pub(crate) mod fill_group {
                 return NssStatus::NotFound;
             }
         };
+        trace!(name = name_str, "getgrnam_r");
 
         let svc = match get_service() {
             Some(s) => s,
@@ -47,7 +50,8 @@ pub(crate) mod fill_group {
                 unsafe { *errnop = 0 };
                 NssStatus::NotFound
             }
-            Err(_) => {
+            Err(e) => {
+                warn!(name = name_str, error = %e, "group lookup failed");
                 unsafe { *errnop = 0 };
                 NssStatus::Unavail
             }
@@ -80,6 +84,7 @@ pub(crate) mod fill_group {
                 return NssStatus::Unavail;
             }
         };
+        trace!(gid, "getgrgid_r");
 
         match svc.lookup_group_by_gid(gid) {
             Ok(Some(grp)) => unsafe { fill_group_buf(&grp, result, buf, buflen, errnop) },
@@ -87,7 +92,8 @@ pub(crate) mod fill_group {
                 unsafe { *errnop = 0 };
                 NssStatus::NotFound
             }
-            Err(_) => {
+            Err(e) => {
+                warn!(gid, error = %e, "group lookup by gid failed");
                 unsafe { *errnop = 0 };
                 NssStatus::Unavail
             }

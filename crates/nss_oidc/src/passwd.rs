@@ -5,6 +5,8 @@ pub(crate) mod fill_passwd {
     use crate::ffi::NssStatus;
     use crate::state::get_service;
 
+    use tracing::{trace, warn};
+
     /// Look up a user by name and fill the passwd struct.
     ///
     /// # Safety
@@ -24,6 +26,7 @@ pub(crate) mod fill_passwd {
                 return NssStatus::NotFound;
             }
         };
+        trace!(name = name_str, "getpwnam_r");
 
         let svc = match get_service() {
             Some(s) => s,
@@ -46,7 +49,8 @@ pub(crate) mod fill_passwd {
                 unsafe { *errnop = 0 };
                 NssStatus::NotFound
             }
-            Err(_) => {
+            Err(e) => {
+                warn!(name = name_str, error = %e, "user lookup failed");
                 unsafe { *errnop = 0 };
                 NssStatus::Unavail
             }
@@ -79,6 +83,7 @@ pub(crate) mod fill_passwd {
                 return NssStatus::Unavail;
             }
         };
+        trace!(uid, "getpwuid_r");
 
         match svc.lookup_user_by_uid(uid) {
             Ok(Some(user)) => unsafe { fill_passwd_buf(&user, result, buf, buflen, errnop) },
@@ -86,7 +91,8 @@ pub(crate) mod fill_passwd {
                 unsafe { *errnop = 0 };
                 NssStatus::NotFound
             }
-            Err(_) => {
+            Err(e) => {
+                warn!(uid, error = %e, "user lookup by uid failed");
                 unsafe { *errnop = 0 };
                 NssStatus::Unavail
             }

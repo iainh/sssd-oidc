@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use thiserror::Error;
+use tracing::debug;
 
 #[derive(Debug, Error)]
 pub enum ScimError {
@@ -118,6 +119,7 @@ impl ScimClient {
 
     /// Look up a user by `userName`.
     pub fn get_user_by_name(&self, name: &str) -> Result<Option<ScimUser>, ScimError> {
+        debug!(name, "SCIM user lookup by name");
         let escaped = escape_filter_value(name);
         let url = format!("{}/Users?filter=userName eq \"{}\"", self.base_url, escaped);
         let resp: ListResponse<ScimUser> = self
@@ -132,6 +134,7 @@ impl ScimClient {
 
     /// Look up a user by SCIM `id`.
     pub fn get_user_by_id(&self, id: &str) -> Result<Option<ScimUser>, ScimError> {
+        debug!(id, "SCIM user lookup by id");
         let url = format!("{}/Users/{}", self.base_url, id);
         let response = self.http.get(&url).bearer_auth(&self.bearer_token).send()?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -143,6 +146,7 @@ impl ScimClient {
 
     /// Look up a group by `displayName`.
     pub fn get_group_by_name(&self, name: &str) -> Result<Option<ScimGroup>, ScimError> {
+        debug!(name, "SCIM group lookup by name");
         let escaped = escape_filter_value(name);
         let url = format!(
             "{}/Groups?filter=displayName eq \"{}\"",
@@ -160,6 +164,7 @@ impl ScimClient {
 
     /// Look up a group by SCIM `id`.
     pub fn get_group_by_id(&self, id: &str) -> Result<Option<ScimGroup>, ScimError> {
+        debug!(id, "SCIM group lookup by id");
         let url = format!("{}/Groups/{}", self.base_url, id);
         let response = self.http.get(&url).bearer_auth(&self.bearer_token).send()?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -171,24 +176,30 @@ impl ScimClient {
 
     /// List all users, paginating via SCIM `startIndex` + `count`.
     pub fn list_users(&self) -> Result<Vec<ScimUser>, ScimError> {
+        debug!("SCIM listing all users");
         self.paginate_list::<ScimUser>("Users")
     }
 
     /// List all groups, paginating via SCIM `startIndex` + `count`.
     pub fn list_groups(&self) -> Result<Vec<ScimGroup>, ScimError> {
+        debug!("SCIM listing all groups");
         self.paginate_list::<ScimGroup>("Groups")
     }
 
     /// Check if the SCIM endpoint is reachable (health check).
     /// Makes a lightweight request to the Users endpoint with count=0.
     pub fn is_online(&self) -> bool {
+        debug!("SCIM health check");
         let url = format!("{}/Users?count=0", self.base_url);
-        self.http
+        let online = self
+            .http
             .get(&url)
             .bearer_auth(&self.bearer_token)
             .send()
             .map(|r| r.status().is_success())
-            .unwrap_or(false)
+            .unwrap_or(false);
+        debug!(online, "SCIM health check result");
+        online
     }
 
     /// Generic paginated list for a SCIM resource type.
@@ -222,6 +233,7 @@ impl ScimClient {
             start_index += fetched;
         }
 
+        debug!(count = all.len(), resource, "SCIM pagination complete");
         Ok(all)
     }
 }

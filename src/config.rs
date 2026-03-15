@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+use tracing::info;
 
 /// Default config file path.
 const DEFAULT_CONFIG_PATH: &str = "/etc/sssd-oidc/config.toml";
@@ -139,6 +140,7 @@ impl Config {
         let path = std::env::var(CONFIG_ENV_VAR)
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(DEFAULT_CONFIG_PATH));
+        info!(path = %path.display(), "loading configuration");
         Self::load_from(&path)
     }
 
@@ -149,6 +151,7 @@ impl Config {
             source,
         })?;
         let config: Config = toml::from_str(&contents)?;
+        info!(path = %path.display(), "configuration loaded");
         Ok(config)
     }
 }
