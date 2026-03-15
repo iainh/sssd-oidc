@@ -2,12 +2,21 @@ use rusqlite::Connection;
 use thiserror::Error;
 use tracing::{debug, info, trace};
 
+use crate::mapping::{IdRangeExhausted, resolve_id};
 use crate::model::{Group, User};
 
 #[derive(Debug, Error)]
 pub enum CacheError {
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("UID/GID range exhausted — all slots occupied")]
+    RangeExhausted,
+}
+
+impl From<IdRangeExhausted> for CacheError {
+    fn from(_: IdRangeExhausted) -> Self {
+        Self::RangeExhausted
+    }
 }
 
 /// SQLite-backed local cache for UID/GID reverse lookups.
@@ -56,6 +65,60 @@ impl Cache {
     /// Open an in-memory cache (useful for tests).
     pub fn open_in_memory() -> Result<Self, CacheError> {
         Self::open(":memory:")
+    }
+
+    /// Resolve a collision-free UID for `external_id` using linear probing.
+    ///
+    /// Returns the existing UID if this `external_id` is already cached,
+    /// otherwise probes for the first free slot in the UID range.
+    pub fn resolve_uid(
+        &self,
+        external_id: &str,
+        range_min: u32,
+        range_size: u32,
+    ) -> Result<u32, CacheError> {
+        resolve_id(external_id, range_min, range_size, |candidate| {
+            self.uid_owner(candidate, external_id)
+        })
+    }
+
+    /// Resolve a collision-free GID for `external_id` using linear probing.
+    pub fn resolve_gid(
+        &self,
+        external_id: &str,
+        range_min: u32,
+        range_size: u32,
+    ) -> Result<u32, CacheError> {
+        resolve_id(external_id, range_min, range_size, |candidate| {
+            self.gid_owner(candidate, external_id)
+        })
+    }
+
+    /// Check if a UID slot is taken.
+    /// Returns `None` (free), `Some(true)` (ours), or `Some(false)` (other).
+    fn uid_owner(&self, uid: u32, external_id: &str) -> Result<Option<bool>, CacheError> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT external_id FROM uid_cache WHERE uid = ?1")?;
+        let mut rows = stmt.query_map([uid], |row| row.get::<_, String>(0))?;
+        match rows.next() {
+            Some(Ok(owner)) => Ok(Some(owner == external_id)),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
+    /// Check if a GID slot is taken.
+    fn gid_owner(&self, gid: u32, external_id: &str) -> Result<Option<bool>, CacheError> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT external_id FROM gid_cache WHERE gid = ?1")?;
+        let mut rows = stmt.query_map([gid], |row| row.get::<_, String>(0))?;
+        match rows.next() {
+            Some(Ok(owner)) => Ok(Some(owner == external_id)),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
     }
 
     /// Store a user in the cache.
@@ -326,6 +389,102 @@ mod tests {
 
         assert!(cache.get_user_by_uid(200_042).unwrap().is_none());
         assert!(cache.get_group_by_gid(200_010).unwrap().is_none());
+    }
+
+    #[test]
+    fn resolve_uid_returns_same_id_for_same_external_id() {
+        let cache = Cache::open_in_memory().unwrap();
+        let uid1 = cache.resolve_uid("user-aaa", 200_000, 200_000).unwrap();
+        // Store a user so the cache knows this UID is taken by "user-aaa"
+        cache
+            .store_user(&User {
+                external_id: "user-aaa".into(),
+                name: "aaa".into(),
+                uid: uid1,
+                gid: 200_001,
+                gecos: String::new(),
+                home: "/home/aaa".into(),
+                shell: "/bin/bash".into(),
+                active: true,
+            })
+            .unwrap();
+        // Same external_id should resolve to the same UID
+        let uid2 = cache.resolve_uid("user-aaa", 200_000, 200_000).unwrap();
+        assert_eq!(uid1, uid2);
+    }
+
+    #[test]
+    fn resolve_uid_linear_probes_on_collision() {
+        let cache = Cache::open_in_memory().unwrap();
+        // Get the candidate UID for user-aaa
+        let uid_aaa = cache.resolve_uid("user-aaa", 200_000, 200_000).unwrap();
+        // Occupy that slot with user-aaa
+        cache
+            .store_user(&User {
+                external_id: "user-aaa".into(),
+                name: "aaa".into(),
+                uid: uid_aaa,
+                gid: 200_001,
+                gecos: String::new(),
+                home: "/home/aaa".into(),
+                shell: "/bin/bash".into(),
+                active: true,
+            })
+            .unwrap();
+
+        // Now manually insert a *different* user at the same UID that user-bbb
+        // would hash to, to force a collision. We do this by finding user-bbb's
+        // natural hash and pre-occupying it.
+        let natural_bbb = crate::mapping::id_to_uid("user-bbb", 200_000, 200_000);
+        cache
+            .store_user(&User {
+                external_id: "blocker".into(),
+                name: "blocker".into(),
+                uid: natural_bbb,
+                gid: 200_001,
+                gecos: String::new(),
+                home: "/home/blocker".into(),
+                shell: "/bin/bash".into(),
+                active: true,
+            })
+            .unwrap();
+
+        // user-bbb should get a different UID (probed)
+        let uid_bbb = cache.resolve_uid("user-bbb", 200_000, 200_000).unwrap();
+        assert_ne!(uid_bbb, natural_bbb);
+        assert!(uid_bbb >= 200_000 && uid_bbb < 400_000);
+    }
+
+    #[test]
+    fn resolve_gid_handles_collision() {
+        let cache = Cache::open_in_memory().unwrap();
+        let gid_a = cache.resolve_gid("group-a", 300_000, 100).unwrap();
+        cache
+            .store_group(&Group {
+                external_id: "group-a".into(),
+                name: "alpha".into(),
+                gid: gid_a,
+                members: vec![],
+            })
+            .unwrap();
+
+        // Occupy group-b's natural slot with group-a's data by inserting a
+        // blocker at group-b's hash
+        let natural_b = crate::mapping::id_to_uid("group-b", 300_000, 100);
+        if natural_b != gid_a {
+            cache
+                .store_group(&Group {
+                    external_id: "blocker".into(),
+                    name: "blocker".into(),
+                    gid: natural_b,
+                    members: vec![],
+                })
+                .unwrap();
+        }
+
+        let gid_b = cache.resolve_gid("group-b", 300_000, 100).unwrap();
+        assert_ne!(gid_b, natural_b);
+        assert!(gid_b >= 300_000 && gid_b < 300_100);
     }
 
     #[test]

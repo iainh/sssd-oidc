@@ -13,6 +13,41 @@ pub fn id_to_uid(external_id: &str, range_min: u32, range_size: u32) -> u32 {
     range_min + (hash % range_size)
 }
 
+/// Resolve a UID for `external_id` with linear probing to handle hash collisions.
+///
+/// 1. If `external_id` already has a cached ID, return it (stable mapping).
+/// 2. Otherwise compute the murmur3 candidate and probe linearly until an
+///    unused slot is found, then return it.
+///
+/// `is_taken` receives `(candidate_id, external_id)` and returns:
+/// - `Ok(None)` if the slot is free,
+/// - `Ok(Some(true))` if the slot is already held by *this* `external_id`,
+/// - `Ok(Some(false))` if the slot is held by a *different* `external_id`.
+pub fn resolve_id<E>(
+    external_id: &str,
+    range_min: u32,
+    range_size: u32,
+    is_taken: impl Fn(u32) -> Result<Option<bool>, E>,
+) -> Result<u32, E>
+where
+    E: From<IdRangeExhausted>,
+{
+    let base = id_to_uid(external_id, range_min, range_size);
+    for offset in 0..range_size {
+        let candidate = range_min + (base - range_min + offset) % range_size;
+        match is_taken(candidate)? {
+            None => return Ok(candidate),       // free slot
+            Some(true) => return Ok(candidate), // already ours
+            Some(false) => continue,            // collision, probe next
+        }
+    }
+    Err(E::from(IdRangeExhausted))
+}
+
+/// Error returned when every slot in the configured ID range is occupied.
+#[derive(Debug, Clone, Copy)]
+pub struct IdRangeExhausted;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,5 +72,63 @@ mod tests {
         let uid_b = id_to_uid("user-b-uuid", 200_000, 200_000);
         // Not guaranteed in general, but extremely likely for these specific inputs.
         assert_ne!(uid_a, uid_b);
+    }
+
+    #[test]
+    fn resolve_id_probes_on_collision() {
+        use std::collections::HashMap;
+
+        // Simulate a taken-slot table: uid → external_id
+        let mut taken: HashMap<u32, String> = HashMap::new();
+
+        // First user gets the natural hash slot
+        let uid_a: Result<u32, IdRangeExhausted> = resolve_id(
+            "user-a",
+            100,
+            10,
+            |candidate| -> Result<_, IdRangeExhausted> {
+                match taken.get(&candidate) {
+                    None => Ok(None),
+                    Some(eid) => Ok(Some(eid == "user-a")),
+                }
+            },
+        );
+        let uid_a = uid_a.unwrap();
+        taken.insert(uid_a, "user-a".into());
+
+        // Force a collision by pre-occupying user-b's natural slot
+        let natural_b = id_to_uid("user-b", 100, 10);
+        if !taken.contains_key(&natural_b) {
+            taken.insert(natural_b, "blocker".into());
+        }
+
+        let uid_b: Result<u32, IdRangeExhausted> = resolve_id(
+            "user-b",
+            100,
+            10,
+            |candidate| -> Result<_, IdRangeExhausted> {
+                match taken.get(&candidate) {
+                    None => Ok(None),
+                    Some(eid) => Ok(Some(eid == "user-b")),
+                }
+            },
+        );
+        let uid_b = uid_b.unwrap();
+        assert_ne!(uid_b, natural_b);
+        assert!(uid_b >= 100 && uid_b < 110);
+    }
+
+    #[test]
+    fn resolve_id_returns_range_exhausted() {
+        // Every slot is taken by a different external_id
+        let result: Result<u32, IdRangeExhausted> = resolve_id(
+            "new-user",
+            100,
+            3,
+            |_candidate| -> Result<_, IdRangeExhausted> {
+                Ok(Some(false)) // always taken by someone else
+            },
+        );
+        assert!(result.is_err());
     }
 }

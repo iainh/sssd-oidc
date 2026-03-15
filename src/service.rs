@@ -3,7 +3,7 @@ use tracing::{debug, info, warn};
 
 use crate::cache::Cache;
 use crate::config::Config;
-use crate::mapping::id_to_uid;
+use crate::mapping::IdRangeExhausted;
 use crate::model::{Group, User};
 use crate::scim::{ScimClient, ScimError};
 
@@ -13,6 +13,14 @@ pub enum ServiceError {
     Scim(#[from] ScimError),
     #[error("cache error: {0}")]
     Cache(#[from] crate::cache::CacheError),
+    #[error("UID/GID range exhausted — all slots occupied")]
+    RangeExhausted,
+}
+
+impl From<IdRangeExhausted> for ServiceError {
+    fn from(_: IdRangeExhausted) -> Self {
+        Self::RangeExhausted
+    }
 }
 
 /// Façade used by NSS and PAM modules to resolve users and groups.
@@ -36,7 +44,7 @@ impl Service {
         debug!(name, "looking up user by name");
         match self.scim.get_user_by_name(name) {
             Ok(Some(scim_user)) => {
-                let user = self.scim_user_to_model(&scim_user);
+                let user = self.scim_user_to_model(&scim_user)?;
                 self.cache.store_user(&user)?;
                 debug!(name, uid = user.uid, "user resolved via SCIM");
                 Ok(Some(user))
@@ -69,7 +77,7 @@ impl Service {
         debug!(name, "looking up group by name");
         match self.scim.get_group_by_name(name) {
             Ok(Some(scim_group)) => {
-                let group = self.scim_group_to_model(&scim_group);
+                let group = self.scim_group_to_model(&scim_group)?;
                 self.cache.store_group(&group)?;
                 Ok(Some(group))
             }
@@ -95,7 +103,7 @@ impl Service {
         let scim_users = self.scim.list_users()?;
         let mut users = Vec::with_capacity(scim_users.len());
         for su in &scim_users {
-            let user = self.scim_user_to_model(su);
+            let user = self.scim_user_to_model(su)?;
             self.cache.store_user(&user)?;
             users.push(user);
         }
@@ -108,7 +116,7 @@ impl Service {
         let scim_groups = self.scim.list_groups()?;
         let mut groups = Vec::with_capacity(scim_groups.len());
         for sg in &scim_groups {
-            let group = self.scim_group_to_model(sg);
+            let group = self.scim_group_to_model(sg)?;
             self.cache.store_group(&group)?;
             groups.push(group);
         }
@@ -121,7 +129,7 @@ impl Service {
     pub fn check_user_active(&self, name: &str) -> Result<bool, ServiceError> {
         match self.scim.get_user_by_name(name) {
             Ok(Some(scim_user)) => {
-                let user = self.scim_user_to_model(&scim_user);
+                let user = self.scim_user_to_model(&scim_user)?;
                 self.cache.store_user(&user)?;
                 debug!(name, active = user.active, "user active status");
                 Ok(user.active)
@@ -148,15 +156,16 @@ impl Service {
         let mc = &self.config.mapping;
         match self.scim.get_user_by_name(name) {
             Ok(Some(scim_user)) => {
-                let user = self.scim_user_to_model(&scim_user);
+                let user = self.scim_user_to_model(&scim_user)?;
                 self.cache.store_user(&user)?;
-                let gids: Vec<u32> = scim_user
-                    .groups
-                    .iter()
-                    .map(|g| {
-                        crate::mapping::id_to_uid(&g.value, mc.gid_range_min, mc.gid_range_size)
-                    })
-                    .collect();
+                let mut gids = Vec::with_capacity(scim_user.groups.len());
+                for g in &scim_user.groups {
+                    gids.push(self.cache.resolve_gid(
+                        &g.value,
+                        mc.gid_range_min,
+                        mc.gid_range_size,
+                    )?);
+                }
                 Ok(gids)
             }
             Ok(None) => Ok(Vec::new()),
@@ -167,21 +176,25 @@ impl Service {
         }
     }
 
-    fn scim_user_to_model(&self, scim_user: &crate::scim::ScimUser) -> User {
+    fn scim_user_to_model(&self, scim_user: &crate::scim::ScimUser) -> Result<User, ServiceError> {
         let mc = &self.config.mapping;
-        let uid = id_to_uid(&scim_user.id, mc.uid_range_min, mc.uid_range_size);
-        // Use the first group as primary GID, or fall back to the user's own UID range.
-        let gid = if let Some(first_group) = scim_user.groups.first() {
-            id_to_uid(&first_group.value, mc.gid_range_min, mc.gid_range_size)
+        let uid = self
+            .cache
+            .resolve_uid(&scim_user.id, mc.uid_range_min, mc.uid_range_size)?;
+        let gid_external = if let Some(first_group) = scim_user.groups.first() {
+            &first_group.value
         } else {
-            id_to_uid(&scim_user.id, mc.gid_range_min, mc.gid_range_size)
+            &scim_user.id
         };
+        let gid = self
+            .cache
+            .resolve_gid(gid_external, mc.gid_range_min, mc.gid_range_size)?;
         let home = self
             .config
             .user_defaults
             .home_template
             .replace("{user}", &scim_user.user_name);
-        User {
+        Ok(User {
             external_id: scim_user.id.clone(),
             name: scim_user.user_name.clone(),
             uid,
@@ -190,22 +203,27 @@ impl Service {
             home,
             shell: self.config.user_defaults.shell.clone(),
             active: scim_user.active.unwrap_or(true),
-        }
+        })
     }
 
-    fn scim_group_to_model(&self, scim_group: &crate::scim::ScimGroup) -> Group {
+    fn scim_group_to_model(
+        &self,
+        scim_group: &crate::scim::ScimGroup,
+    ) -> Result<Group, ServiceError> {
         let mc = &self.config.mapping;
-        let gid = id_to_uid(&scim_group.id, mc.gid_range_min, mc.gid_range_size);
+        let gid = self
+            .cache
+            .resolve_gid(&scim_group.id, mc.gid_range_min, mc.gid_range_size)?;
         let members = scim_group
             .members
             .iter()
             .filter_map(|m| m.display.clone())
             .collect();
-        Group {
+        Ok(Group {
             external_id: scim_group.id.clone(),
             name: scim_group.display_name.clone(),
             gid,
             members,
-        }
+        })
     }
 }
