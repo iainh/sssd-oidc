@@ -93,6 +93,71 @@ impl MockIdp {
         Self { server }
     }
 
+    /// Mount device code flow mocks: POST /device returns a device code,
+    /// POST /token returns authorization_pending once then succeeds.
+    pub async fn mount_device_code_flow(&self) {
+        // POST /device → returns device code
+        Mock::given(method("POST"))
+            .and(path("/device"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "device_code": "test-device-code-001",
+                "user_code": "ABCD-1234",
+                "verification_uri": format!("{}/activate", self.server.uri()),
+                "verification_uri_complete": format!("{}/activate?code=ABCD-1234", self.server.uri()),
+                "expires_in": 600,
+                "interval": 0
+            })))
+            .mount(&self.server)
+            .await;
+
+        // POST /token → first call returns authorization_pending (fires once)
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "authorization_pending",
+                "error_description": "The user has not yet completed authorization"
+            })))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&self.server)
+            .await;
+
+        // POST /token → second call succeeds (lower priority, fires after the first)
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "test-access-token-001",
+                "id_token": "test-id-token-001",
+                "token_type": "Bearer"
+            })))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Mount device code flow mocks that always return expired_token.
+    pub async fn mount_device_code_flow_expired(&self) {
+        Mock::given(method("POST"))
+            .and(path("/device"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "device_code": "test-device-code-expired",
+                "user_code": "XXXX-9999",
+                "verification_uri": format!("{}/activate", self.server.uri()),
+                "expires_in": 600,
+                "interval": 0
+            })))
+            .mount(&self.server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "expired_token",
+                "error_description": "The device code has expired"
+            })))
+            .mount(&self.server)
+            .await;
+    }
+
     pub fn base_url(&self) -> String {
         self.server.uri()
     }

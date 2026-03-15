@@ -27,7 +27,8 @@ can resolve a user via `getent passwd <name>` and authenticate via
 | PAM FFI exports (symbol stubs) | ✅ Stubs only | `crates/pam_oidc/src/` |
 | E2E test infra (wiremock mock IdP) | ✅ Complete | `crates/e2e/tests/` |
 | OIDC Discovery (Feature 3) | ✅ Complete | `src/oidc.rs` |
-| All existing tests passing | ✅ 24 tests pass | `cargo test --workspace` |
+| OIDC Device Code (Feature 4) | ✅ Complete | `src/oidc.rs` |
+| All existing tests passing | ✅ 26 tests pass | `cargo test --workspace` |
 
 ---
 
@@ -310,11 +311,11 @@ async fn device_code_flow_handles_expired_token() {
 
 ### Done when
 
-- [ ] `request_device_code()` POSTs to the device authorization endpoint and
+- [x] `request_device_code()` POSTs to the device authorization endpoint and
       parses the response
-- [ ] `poll_for_token()` handles `authorization_pending`, `slow_down`, and
+- [x] `poll_for_token()` handles `authorization_pending`, `slow_down`, and
       success responses correctly
-- [ ] E2E tests pass with wiremock simulating the multi-step flow
+- [x] E2E tests pass with wiremock simulating the multi-step flow
 
 ---
 
