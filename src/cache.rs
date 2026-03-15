@@ -38,6 +38,14 @@ impl Cache {
                 gid         INTEGER UNIQUE NOT NULL,
                 cached_at   INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS group_members (
+                group_external_id TEXT NOT NULL,
+                member_name       TEXT NOT NULL,
+                PRIMARY KEY (group_external_id, member_name),
+                FOREIGN KEY (group_external_id) REFERENCES gid_cache(external_id)
+                    ON DELETE CASCADE
+            );
             ",
         )?;
         Ok(Self { conn })
@@ -116,7 +124,7 @@ impl Cache {
         }
     }
 
-    /// Store a group in the cache.
+    /// Store a group in the cache, including its member list.
     pub fn store_group(&self, group: &Group) -> Result<(), CacheError> {
         self.conn.execute(
             "INSERT OR REPLACE INTO gid_cache
@@ -124,6 +132,16 @@ impl Cache {
              VALUES (?1, ?2, ?3, strftime('%s', 'now'))",
             (&group.external_id, &group.name, group.gid),
         )?;
+        self.conn.execute(
+            "DELETE FROM group_members WHERE group_external_id = ?1",
+            [&group.external_id],
+        )?;
+        for member in &group.members {
+            self.conn.execute(
+                "INSERT INTO group_members (group_external_id, member_name) VALUES (?1, ?2)",
+                (&group.external_id, member),
+            )?;
+        }
         Ok(())
     }
 
@@ -141,7 +159,11 @@ impl Cache {
             })
         })?;
         match rows.next() {
-            Some(row) => Ok(Some(row?)),
+            Some(row) => {
+                let mut group = row?;
+                group.members = self.get_group_members(&group.external_id)?;
+                Ok(Some(group))
+            }
             None => Ok(None),
         }
     }
@@ -160,9 +182,26 @@ impl Cache {
             })
         })?;
         match rows.next() {
-            Some(row) => Ok(Some(row?)),
+            Some(row) => {
+                let mut group = row?;
+                group.members = self.get_group_members(&group.external_id)?;
+                Ok(Some(group))
+            }
             None => Ok(None),
         }
+    }
+
+    /// Load group members from the cache.
+    fn get_group_members(&self, external_id: &str) -> Result<Vec<String>, CacheError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT member_name FROM group_members WHERE group_external_id = ?1")?;
+        let rows = stmt.query_map([external_id], |row| row.get(0))?;
+        let mut members = Vec::new();
+        for name in rows {
+            members.push(name?);
+        }
+        Ok(members)
     }
 }
 
@@ -208,8 +247,10 @@ mod tests {
         let by_gid = cache.get_group_by_gid(200_010).unwrap().unwrap();
         assert_eq!(by_gid.name, "engineering");
         assert_eq!(by_gid.gid, 200_010);
+        assert_eq!(by_gid.members, vec!["alice", "bob"]);
 
         let by_name = cache.get_group_by_name("engineering").unwrap().unwrap();
         assert_eq!(by_name.gid, 200_010);
+        assert_eq!(by_name.members, vec!["alice", "bob"]);
     }
 }
