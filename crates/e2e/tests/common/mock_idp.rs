@@ -63,6 +63,18 @@ impl MockIdp {
             .mount(&server)
             .await;
 
+        // SCIM: GET /Groups?filter=displayName eq "nonexistent"
+        Mock::given(method("GET"))
+            .and(path("/Groups"))
+            .and(query_param("filter", "displayName eq \"nonexistent\""))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+                "totalResults": 0,
+                "Resources": []
+            })))
+            .mount(&server)
+            .await;
+
         // OIDC: GET /.well-known/openid-configuration
         let issuer = server.uri();
         Mock::given(method("GET"))

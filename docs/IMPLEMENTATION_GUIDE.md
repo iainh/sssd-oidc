@@ -22,10 +22,11 @@ can resolve a user via `getent passwd <name>` and authenticate via
 | Domain model (User, Group) | ✅ Complete | `src/model.rs` |
 | Service façade (SCIM → model + cache) | ✅ Complete | `src/service.rs` |
 | NSS passwd FFI (Feature 1) | ✅ Complete | `crates/nss_oidc/src/passwd.rs`, `state.rs` |
+| NSS group FFI (Feature 2) | ✅ Complete | `crates/nss_oidc/src/group.rs` |
 | NSS FFI exports (symbol stubs) | ✅ Stubs only | `crates/nss_oidc/src/` |
 | PAM FFI exports (symbol stubs) | ✅ Stubs only | `crates/pam_oidc/src/` |
 | E2E test infra (wiremock mock IdP) | ✅ Complete | `crates/e2e/tests/` |
-| All existing tests passing | ✅ 20 tests pass | `cargo test --workspace` |
+| All existing tests passing | ✅ 23 tests pass | `cargo test --workspace` |
 
 ---
 
@@ -170,8 +171,8 @@ async fn nss_getgrgid_r_after_name_lookup() {
 
 ### Done when
 
-- [ ] `cargo test --workspace` passes with new group tests
-- [ ] FFI call `_nss_oidc_getgrnam_r("engineering")` fills `struct group`
+- [x] `cargo test --workspace` passes with new group tests
+- [x] FFI call `_nss_oidc_getgrnam_r("engineering")` fills `struct group`
       with correct `gr_name`, `gr_gid`, and `gr_mem` member list
 
 ---

@@ -207,3 +207,157 @@ async fn nss_getpwnam_r_returns_tryagain_on_small_buffer() {
     assert_eq!(status, nss_oidc::ffi::NssStatus::TryAgain);
     assert_eq!(errnop, ERANGE);
 }
+
+// --- Group FFI tests ---
+
+/// Extracted group fields as safe, owned types.
+#[derive(Debug)]
+struct GroupResult {
+    name: String,
+    passwd: String,
+    gid: u32,
+    members: Vec<String>,
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nss_getgrnam_r_fills_group_struct() {
+    ensure_init().await;
+
+    let (status, errnop, grp) = tokio::task::spawn_blocking(|| {
+        let c_name = CString::new("engineering").unwrap();
+        let mut result: libc::group = unsafe { std::mem::zeroed() };
+        let mut buf = [0i8; 4096];
+        let mut errnop: libc::c_int = 0;
+
+        let status = unsafe {
+            nss_oidc::ffi::_nss_oidc_getgrnam_r(
+                c_name.as_ptr(),
+                &mut result,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut errnop,
+            )
+        };
+
+        let grp = GroupResult {
+            name: unsafe { CStr::from_ptr(result.gr_name) }
+                .to_str()
+                .unwrap()
+                .to_owned(),
+            passwd: unsafe { CStr::from_ptr(result.gr_passwd) }
+                .to_str()
+                .unwrap()
+                .to_owned(),
+            gid: result.gr_gid,
+            members: {
+                let mut members = Vec::new();
+                let mut ptr = result.gr_mem;
+                loop {
+                    let entry = unsafe { ptr.read_unaligned() };
+                    if entry.is_null() {
+                        break;
+                    }
+                    members.push(
+                        unsafe { CStr::from_ptr(entry) }
+                            .to_str()
+                            .unwrap()
+                            .to_owned(),
+                    );
+                    ptr = unsafe { ptr.add(1) };
+                }
+                members
+            },
+        };
+
+        (status, errnop, grp)
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(status, nss_oidc::ffi::NssStatus::Success);
+    assert_eq!(errnop, 0);
+    assert_eq!(grp.name, "engineering");
+    assert_eq!(grp.passwd, "x");
+    assert!(grp.gid >= 200_000 && grp.gid < 400_000);
+    assert!(grp.members.contains(&"alice".to_string()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nss_getgrnam_r_returns_notfound_for_unknown_group() {
+    ensure_init().await;
+
+    let (status, errnop) = tokio::task::spawn_blocking(|| {
+        let c_name = CString::new("nonexistent").unwrap();
+        let mut result: libc::group = unsafe { std::mem::zeroed() };
+        let mut buf = [0i8; 1024];
+        let mut errnop: libc::c_int = 0;
+
+        let status = unsafe {
+            nss_oidc::ffi::_nss_oidc_getgrnam_r(
+                c_name.as_ptr(),
+                &mut result,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut errnop,
+            )
+        };
+        (status, errnop)
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(status, nss_oidc::ffi::NssStatus::NotFound);
+    assert_eq!(errnop, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nss_getgrgid_r_after_name_lookup() {
+    ensure_init().await;
+
+    let (name, gid) = tokio::task::spawn_blocking(|| {
+        // First look up by name to populate cache
+        let c_name = CString::new("engineering").unwrap();
+        let mut result: libc::group = unsafe { std::mem::zeroed() };
+        let mut buf = [0i8; 4096];
+        let mut errnop: libc::c_int = 0;
+
+        let status = unsafe {
+            nss_oidc::ffi::_nss_oidc_getgrnam_r(
+                c_name.as_ptr(),
+                &mut result,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut errnop,
+            )
+        };
+        assert_eq!(status, nss_oidc::ffi::NssStatus::Success);
+        let gid = result.gr_gid;
+
+        // Now look up by GID
+        let mut result2: libc::group = unsafe { std::mem::zeroed() };
+        let mut buf2 = [0i8; 4096];
+        let mut errnop2: libc::c_int = 0;
+
+        let status2 = unsafe {
+            nss_oidc::ffi::_nss_oidc_getgrgid_r(
+                gid,
+                &mut result2,
+                buf2.as_mut_ptr(),
+                buf2.len(),
+                &mut errnop2,
+            )
+        };
+        assert_eq!(status2, nss_oidc::ffi::NssStatus::Success);
+
+        let name = unsafe { CStr::from_ptr(result2.gr_name) }
+            .to_str()
+            .unwrap()
+            .to_owned();
+        (name, result2.gr_gid)
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(name, "engineering");
+    assert!(gid >= 200_000 && gid < 400_000);
+}
