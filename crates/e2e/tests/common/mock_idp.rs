@@ -2,10 +2,12 @@ use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// A running mock SCIM + OIDC server with pre-configured responses.
+#[allow(dead_code)]
 pub struct MockIdp {
     pub server: MockServer,
 }
 
+#[allow(dead_code)]
 impl MockIdp {
     /// Start a mock server with a single test user and group.
     pub async fn start() -> Self {

@@ -7,6 +7,7 @@ use tempfile::NamedTempFile;
 
 /// Create a temporary config file pointing at the given mock server URLs.
 /// Returns the temp file (keeps it alive) and the parsed Config.
+#[allow(dead_code)]
 pub fn test_config(scim_base_url: &str, oidc_issuer_url: &str) -> (NamedTempFile, Config) {
     let toml_content = format!(
         r#"
