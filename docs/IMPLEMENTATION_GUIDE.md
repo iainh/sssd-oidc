@@ -26,7 +26,8 @@ can resolve a user via `getent passwd <name>` and authenticate via
 | NSS FFI exports (symbol stubs) | ✅ Stubs only | `crates/nss_oidc/src/` |
 | PAM FFI exports (symbol stubs) | ✅ Stubs only | `crates/pam_oidc/src/` |
 | E2E test infra (wiremock mock IdP) | ✅ Complete | `crates/e2e/tests/` |
-| All existing tests passing | ✅ 23 tests pass | `cargo test --workspace` |
+| OIDC Discovery (Feature 3) | ✅ Complete | `src/oidc.rs` |
+| All existing tests passing | ✅ 24 tests pass | `cargo test --workspace` |
 
 ---
 
@@ -226,8 +227,8 @@ is already set up in `crates/e2e/tests/common/mock_idp.rs`.
 
 ### Done when
 
-- [ ] `OidcClient::discover()` fetches and parses the discovery document
-- [ ] E2E test confirms correct endpoint extraction from the mock server
+- [x] `OidcClient::discover()` fetches and parses the discovery document
+- [x] E2E test confirms correct endpoint extraction from the mock server
 
 ---
 
