@@ -111,14 +111,22 @@ pub struct CacheConfig {
     /// Path to the SQLite cache database.
     #[serde(default = "default_cache_path")]
     pub db_path: String,
+    /// Cache entry TTL in seconds (default: 3600 = 1 hour).
+    #[serde(default = "default_cache_ttl")]
+    pub ttl_seconds: u64,
 }
 
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
             db_path: default_cache_path(),
+            ttl_seconds: default_cache_ttl(),
         }
     }
+}
+
+fn default_cache_ttl() -> u64 {
+    3600
 }
 
 fn default_cache_path() -> String {

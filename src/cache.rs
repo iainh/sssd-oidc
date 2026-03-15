@@ -191,6 +191,25 @@ impl Cache {
         }
     }
 
+    /// Purge cache entries older than `ttl_seconds`.
+    pub fn purge_expired(&self, ttl_seconds: u64) -> Result<(), CacheError> {
+        self.conn.execute(
+            "DELETE FROM group_members WHERE group_external_id IN
+                (SELECT external_id FROM gid_cache
+                 WHERE cached_at <= strftime('%s', 'now') - ?1)",
+            [ttl_seconds],
+        )?;
+        self.conn.execute(
+            "DELETE FROM gid_cache WHERE cached_at <= strftime('%s', 'now') - ?1",
+            [ttl_seconds],
+        )?;
+        self.conn.execute(
+            "DELETE FROM uid_cache WHERE cached_at <= strftime('%s', 'now') - ?1",
+            [ttl_seconds],
+        )?;
+        Ok(())
+    }
+
     /// Load group members from the cache.
     fn get_group_members(&self, external_id: &str) -> Result<Vec<String>, CacheError> {
         let mut stmt = self
@@ -252,5 +271,56 @@ mod tests {
         let by_name = cache.get_group_by_name("engineering").unwrap().unwrap();
         assert_eq!(by_name.gid, 200_010);
         assert_eq!(by_name.members, vec!["alice", "bob"]);
+    }
+
+    #[test]
+    fn purge_expired_removes_old_entries() {
+        let cache = Cache::open_in_memory().unwrap();
+        let user = User {
+            external_id: "abc-123".into(),
+            name: "alice".into(),
+            uid: 200_042,
+            gid: 200_001,
+            gecos: "Alice Smith".into(),
+            home: "/home/alice".into(),
+            shell: "/bin/bash".into(),
+            active: true,
+        };
+        cache.store_user(&user).unwrap();
+
+        let group = Group {
+            external_id: "grp-456".into(),
+            name: "engineering".into(),
+            gid: 200_010,
+            members: vec!["alice".into()],
+        };
+        cache.store_group(&group).unwrap();
+
+        // With TTL=0 everything is already expired
+        cache.purge_expired(0).unwrap();
+
+        assert!(cache.get_user_by_uid(200_042).unwrap().is_none());
+        assert!(cache.get_group_by_gid(200_010).unwrap().is_none());
+    }
+
+    #[test]
+    fn purge_expired_keeps_recent_entries() {
+        let cache = Cache::open_in_memory().unwrap();
+        let user = User {
+            external_id: "abc-123".into(),
+            name: "alice".into(),
+            uid: 200_042,
+            gid: 200_001,
+            gecos: "Alice Smith".into(),
+            home: "/home/alice".into(),
+            shell: "/bin/bash".into(),
+            active: true,
+        };
+        cache.store_user(&user).unwrap();
+
+        // With a large TTL, entries should be kept
+        cache.purge_expired(86400).unwrap();
+
+        assert!(cache.get_user_by_uid(200_042).unwrap().is_some());
     }
 }
