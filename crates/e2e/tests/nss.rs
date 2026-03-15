@@ -128,3 +128,89 @@ fn deterministic_uid_mapping() {
     assert_eq!(uid1, uid2);
     assert!(uid1 >= 200_000 && uid1 < 400_000);
 }
+
+/// Active user passes check_user_active.
+#[tokio::test(flavor = "multi_thread")]
+async fn active_user_passes_acct_mgmt() {
+    let idp = MockIdp::start().await;
+    let base = idp.base_url();
+    let svc = tokio::task::spawn_blocking({
+        let base = base.clone();
+        move || make_service(&base, &base)
+    })
+    .await
+    .unwrap();
+
+    let active = tokio::task::spawn_blocking(move || svc.check_user_active("alice"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(active);
+}
+
+/// Inactive user (SCIM active=false) is denied by check_user_active.
+#[tokio::test(flavor = "multi_thread")]
+async fn inactive_user_denied_by_acct_mgmt() {
+    let idp = MockIdp::start().await;
+    let base = idp.base_url();
+    let svc = tokio::task::spawn_blocking({
+        let base = base.clone();
+        move || make_service(&base, &base)
+    })
+    .await
+    .unwrap();
+
+    let active = tokio::task::spawn_blocking(move || svc.check_user_active("disabled_bob"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!active);
+}
+
+/// When SCIM is unreachable, cached user passes (assumed active).
+#[tokio::test(flavor = "multi_thread")]
+async fn acct_mgmt_falls_back_to_cache_on_scim_error() {
+    let idp = MockIdp::start().await;
+    let base = idp.base_url();
+
+    // First, look up alice to populate cache
+    let svc = tokio::task::spawn_blocking({
+        let base = base.clone();
+        move || make_service(&base, &base)
+    })
+    .await
+    .unwrap();
+
+    let active = tokio::task::spawn_blocking(move || {
+        // Populate cache
+        let _ = svc.lookup_user_by_name("alice").unwrap();
+        // Now create a service pointing at a dead URL to simulate SCIM outage
+        let (_config_file, config) = test_config("http://127.0.0.1:1", "http://127.0.0.1:1");
+        let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
+        // Re-use the same cache (in-memory won't work across services, but the
+        // test_config uses ":memory:" which creates a new DB. We need a shared cache.)
+        // For this test, we verify the code path by checking that a user we just
+        // cached in the first service can be checked. Since each service gets its
+        // own in-memory cache, we verify the logic differently: we pre-populate
+        // the cache and check.
+        let cache = Cache::open_in_memory().unwrap();
+        let user = sssd_oidc::model::User {
+            external_id: "user-uuid-alice-001".into(),
+            name: "alice".into(),
+            uid: 200_000,
+            gid: 200_000,
+            gecos: "Alice Smith".into(),
+            home: "/home/alice".into(),
+            shell: "/bin/bash".into(),
+            active: true,
+        };
+        cache.store_user(&user).unwrap();
+        let svc2 = Service::new(config, scim, cache);
+        std::mem::forget(_config_file);
+        svc2.check_user_active("alice").unwrap()
+    })
+    .await
+    .unwrap();
+
+    assert!(active);
+}

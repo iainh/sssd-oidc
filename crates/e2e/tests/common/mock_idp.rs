@@ -32,6 +32,24 @@ impl MockIdp {
             .mount(&server)
             .await;
 
+        // SCIM: GET /Users?filter=userName eq "disabled_bob"
+        Mock::given(method("GET"))
+            .and(path("/Users"))
+            .and(query_param("filter", "userName eq \"disabled_bob\""))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+                "totalResults": 1,
+                "Resources": [{
+                    "id": "user-uuid-bob-002",
+                    "userName": "disabled_bob",
+                    "displayName": "Bob Disabled",
+                    "active": false,
+                    "groups": []
+                }]
+            })))
+            .mount(&server)
+            .await;
+
         // SCIM: GET /Users?filter=userName eq "nonexistent"
         Mock::given(method("GET"))
             .and(path("/Users"))

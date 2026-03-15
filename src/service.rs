@@ -75,6 +75,26 @@ impl Service {
         Ok(None)
     }
 
+    /// Check if a user is active. Tries SCIM first, falls back to cache.
+    /// Cached users are assumed active unless explicitly marked inactive.
+    pub fn check_user_active(&self, name: &str) -> Result<bool, ServiceError> {
+        match self.scim.get_user_by_name(name) {
+            Ok(Some(scim_user)) => {
+                let user = self.scim_user_to_model(&scim_user);
+                self.cache.store_user(&user)?;
+                Ok(user.active)
+            }
+            Ok(None) => Ok(false), // user not found → not active
+            Err(_) => {
+                // SCIM unreachable — fall back to cache
+                match self.cache.get_user_by_name(name)? {
+                    Some(user) => Ok(user.active),
+                    None => Ok(false),
+                }
+            }
+        }
+    }
+
     fn scim_user_to_model(&self, scim_user: &crate::scim::ScimUser) -> User {
         let mc = &self.config.mapping;
         let uid = id_to_uid(&scim_user.id, mc.uid_range_min, mc.uid_range_size);
@@ -97,6 +117,7 @@ impl Service {
             gecos: scim_user.display_name.clone().unwrap_or_default(),
             home,
             shell: self.config.user_defaults.shell.clone(),
+            active: scim_user.active.unwrap_or(true),
         }
     }
 

@@ -101,11 +101,46 @@ pub unsafe extern "C" fn pam_sm_setcred(
 /// `pamh` must be a valid PAM handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pam_sm_acct_mgmt(
-    _pamh: *mut PamHandle,
+    pamh: *mut PamHandle,
     _flags: c_int,
     _argc: c_int,
     _argv: *const *const libc::c_char,
 ) -> c_int {
-    // TODO: check SCIM user `active` flag and group-based access rules
+    acct_mgmt_impl(pamh)
+}
+
+#[cfg(target_os = "linux")]
+fn acct_mgmt_impl(pamh: *mut PamHandle) -> c_int {
+    use sssd_oidc::cache::Cache;
+    use sssd_oidc::config::Config;
+    use sssd_oidc::scim::ScimClient;
+    use sssd_oidc::service::Service;
+
+    let username = match unsafe { crate::pam_conv::get_pam_user(pamh) } {
+        Ok(u) => u,
+        Err(_) => return PAM_AUTH_ERR,
+    };
+
+    let config = match Config::load() {
+        Ok(c) => c,
+        Err(_) => return PAM_AUTHINFO_UNAVAIL,
+    };
+
+    let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
+    let cache = match Cache::open(&config.cache.db_path) {
+        Ok(c) => c,
+        Err(_) => return PAM_AUTHINFO_UNAVAIL,
+    };
+    let svc = Service::new(config, scim, cache);
+
+    match svc.check_user_active(&username) {
+        Ok(true) => PAM_SUCCESS,
+        Ok(false) => PAM_PERM_DENIED,
+        Err(_) => PAM_AUTHINFO_UNAVAIL,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn acct_mgmt_impl(_pamh: *mut PamHandle) -> c_int {
     PAM_SUCCESS
 }

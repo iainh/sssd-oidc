@@ -29,7 +29,8 @@ can resolve a user via `getent passwd <name>` and authenticate via
 | OIDC Discovery (Feature 3) | ✅ Complete | `src/oidc.rs` |
 | OIDC Device Code (Feature 4) | ✅ Complete | `src/oidc.rs` |
 | PAM authenticate (Feature 5) | ✅ Complete | `crates/pam_oidc/src/ffi.rs`, `pam_conv.rs` |
-| All existing tests passing | ✅ 26 tests pass | `cargo test --workspace` |
+| Access control (Feature 6) | ✅ Complete | `src/service.rs`, `crates/pam_oidc/src/ffi.rs` |
+| All existing tests passing | ✅ 29 tests pass | `cargo test --workspace` |
 
 ---
 
@@ -430,9 +431,9 @@ async fn acct_mgmt_falls_back_to_cache_on_scim_error() {
 
 ### Done when
 
-- [ ] Inactive users (SCIM `active: false`) are denied by `pam_sm_acct_mgmt`
-- [ ] Active users pass
-- [ ] SCIM outage falls back to cache gracefully
+- [x] Inactive users (SCIM `active: false`) are denied by `pam_sm_acct_mgmt`
+- [x] Active users pass
+- [x] SCIM outage falls back to cache gracefully
 
 ---
 

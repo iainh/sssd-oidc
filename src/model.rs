@@ -17,6 +17,13 @@ pub struct User {
     pub home: String,
     /// Login shell.
     pub shell: String,
+    /// Whether the user account is active (from SCIM `active` field).
+    #[serde(default = "default_active")]
+    pub active: bool,
+}
+
+fn default_active() -> bool {
+    true
 }
 
 /// A resolved POSIX group, ready to be packed into `struct group`.

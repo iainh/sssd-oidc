@@ -28,6 +28,7 @@ impl Cache {
                 home        TEXT NOT NULL DEFAULT '',
                 shell       TEXT NOT NULL DEFAULT '',
                 gid         INTEGER NOT NULL DEFAULT 0,
+                active      INTEGER NOT NULL DEFAULT 1,
                 cached_at   INTEGER NOT NULL
             );
 
@@ -51,8 +52,8 @@ impl Cache {
     pub fn store_user(&self, user: &User) -> Result<(), CacheError> {
         self.conn.execute(
             "INSERT OR REPLACE INTO uid_cache
-                (external_id, login, uid, gecos, home, shell, gid, cached_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, strftime('%s', 'now'))",
+                (external_id, login, uid, gecos, home, shell, gid, active, cached_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, strftime('%s', 'now'))",
             (
                 &user.external_id,
                 &user.name,
@@ -61,6 +62,7 @@ impl Cache {
                 &user.home,
                 &user.shell,
                 user.gid,
+                user.active,
             ),
         )?;
         Ok(())
@@ -69,7 +71,7 @@ impl Cache {
     /// Look up a user by UID from the cache.
     pub fn get_user_by_uid(&self, uid: u32) -> Result<Option<User>, CacheError> {
         let mut stmt = self.conn.prepare(
-            "SELECT external_id, login, uid, gid, gecos, home, shell
+            "SELECT external_id, login, uid, gid, gecos, home, shell, active
              FROM uid_cache WHERE uid = ?1",
         )?;
         let mut rows = stmt.query_map([uid], |row| {
@@ -81,6 +83,7 @@ impl Cache {
                 gecos: row.get(4)?,
                 home: row.get(5)?,
                 shell: row.get(6)?,
+                active: row.get(7)?,
             })
         })?;
         match rows.next() {
@@ -92,7 +95,7 @@ impl Cache {
     /// Look up a user by login name from the cache.
     pub fn get_user_by_name(&self, name: &str) -> Result<Option<User>, CacheError> {
         let mut stmt = self.conn.prepare(
-            "SELECT external_id, login, uid, gid, gecos, home, shell
+            "SELECT external_id, login, uid, gid, gecos, home, shell, active
              FROM uid_cache WHERE login = ?1",
         )?;
         let mut rows = stmt.query_map([name], |row| {
@@ -104,6 +107,7 @@ impl Cache {
                 gecos: row.get(4)?,
                 home: row.get(5)?,
                 shell: row.get(6)?,
+                active: row.get(7)?,
             })
         })?;
         match rows.next() {
@@ -177,6 +181,7 @@ mod tests {
             gecos: "Alice Smith".into(),
             home: "/home/alice".into(),
             shell: "/bin/bash".into(),
+            active: true,
         };
         cache.store_user(&user).unwrap();
 
