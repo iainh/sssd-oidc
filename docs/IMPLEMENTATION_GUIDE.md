@@ -28,6 +28,7 @@ can resolve a user via `getent passwd <name>` and authenticate via
 | E2E test infra (wiremock mock IdP) | ✅ Complete | `crates/e2e/tests/` |
 | OIDC Discovery (Feature 3) | ✅ Complete | `src/oidc.rs` |
 | OIDC Device Code (Feature 4) | ✅ Complete | `src/oidc.rs` |
+| PAM authenticate (Feature 5) | ✅ Complete | `crates/pam_oidc/src/ffi.rs`, `pam_conv.rs` |
 | All existing tests passing | ✅ 26 tests pass | `cargo test --workspace` |
 
 ---
@@ -381,8 +382,8 @@ async fn pam_auth_flow_with_mock_idp() {
 
 ### Done when
 
-- [ ] `pam_sm_authenticate` compiles and calls the OIDC device flow
-- [ ] `cargo test --workspace` passes
+- [x] `pam_sm_authenticate` compiles and calls the OIDC device flow
+- [x] `cargo test --workspace` passes
 - [ ] The container integration test (Feature 9) can authenticate a user
 
 ---

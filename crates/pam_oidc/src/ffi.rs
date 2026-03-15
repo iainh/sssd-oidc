@@ -3,6 +3,8 @@ use libc::c_int;
 /// PAM return codes (from <security/pam_modules.h>).
 pub const PAM_SUCCESS: c_int = 0;
 pub const PAM_AUTH_ERR: c_int = 7;
+pub const PAM_AUTHINFO_UNAVAIL: c_int = 9;
+pub const PAM_PERM_DENIED: c_int = 6;
 pub const PAM_IGNORE: c_int = 25;
 
 /// PAM handle (opaque — we never dereference it, only pass it through).
@@ -13,17 +15,67 @@ pub struct PamHandle {
 
 /// Authenticate the user via OIDC device code flow.
 ///
+/// On non-Linux platforms (no libpam), this returns PAM_AUTH_ERR.
+///
 /// # Safety
 ///
 /// `pamh` must be a valid PAM handle provided by the PAM framework.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pam_sm_authenticate(
-    _pamh: *mut PamHandle,
+    pamh: *mut PamHandle,
     _flags: c_int,
     _argc: c_int,
     _argv: *const *const libc::c_char,
 ) -> c_int {
-    // TODO: implement OIDC device code authentication
+    authenticate_impl(pamh)
+}
+
+#[cfg(target_os = "linux")]
+fn authenticate_impl(pamh: *mut PamHandle) -> c_int {
+    use sssd_oidc::config::Config;
+    use sssd_oidc::oidc::OidcClient;
+
+    let username = match unsafe { crate::pam_conv::get_pam_user(pamh) } {
+        Ok(u) => u,
+        Err(_) => return PAM_AUTH_ERR,
+    };
+
+    let config = match Config::load() {
+        Ok(c) => c,
+        Err(_) => return PAM_AUTHINFO_UNAVAIL,
+    };
+
+    let client = match OidcClient::discover(
+        &config.oidc.issuer_url,
+        &config.oidc.client_id,
+        config.oidc.client_secret.as_deref(),
+    ) {
+        Ok(c) => c,
+        Err(_) => return PAM_AUTHINFO_UNAVAIL,
+    };
+
+    let result = client.authenticate_device_flow("openid", |user_code, verification_uri| {
+        let msg = format!(
+            "To sign in, visit: {verification_uri}\nEnter code: {user_code}\nWaiting for authentication..."
+        );
+        unsafe {
+            crate::pam_conv::pam_info(pamh, &msg);
+        }
+    });
+
+    match result {
+        Ok(_token) => {
+            // TODO: optionally verify token subject matches username
+            let _ = &username;
+            PAM_SUCCESS
+        }
+        Err(_) => PAM_AUTH_ERR,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn authenticate_impl(_pamh: *mut PamHandle) -> c_int {
+    // PAM functions (pam_get_user, pam_get_item) are only available on Linux
     PAM_AUTH_ERR
 }
 
