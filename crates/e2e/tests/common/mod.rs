@@ -6,14 +6,30 @@ use sssd_oidc::config::Config;
 use tempfile::NamedTempFile;
 
 /// Create a temporary config file pointing at the given mock server URLs.
-/// Returns the temp file (keeps it alive) and the parsed Config.
+/// Returns the temp files (keeps them alive) and the parsed Config.
 #[allow(dead_code)]
-pub fn test_config(scim_base_url: &str, oidc_issuer_url: &str) -> (NamedTempFile, Config) {
+pub fn test_config(
+    scim_base_url: &str,
+    oidc_issuer_url: &str,
+) -> (NamedTempFile, NamedTempFile, Config) {
+    let mut token_file = NamedTempFile::new().expect("failed to create temp token file");
+    token_file
+        .write_all(b"test-bearer-token")
+        .expect("failed to write temp token");
+    token_file.flush().expect("failed to flush temp token");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(token_file.path(), std::fs::Permissions::from_mode(0o600))
+            .expect("failed to set token file permissions");
+    }
+
+    let token_path = token_file.path().display();
     let toml_content = format!(
         r#"
 [scim]
 base_url = "{scim_base_url}"
-bearer_token = "test-bearer-token"
+bearer_token_file = "{token_path}"
 
 [oidc]
 issuer_url = "{oidc_issuer_url}"
@@ -40,5 +56,5 @@ db_path = ":memory:"
     f.flush().expect("failed to flush temp config");
 
     let config = Config::load_from(f.path()).expect("failed to parse test config");
-    (f, config)
+    (f, token_file, config)
 }

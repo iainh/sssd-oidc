@@ -1,6 +1,6 @@
 [scim]
 base_url = "http://mock-idp:9980"
-bearer_token = "test-bearer-token"
+bearer_token_file = "/etc/sssd-oidc/scim-token"
 
 [oidc]
 issuer_url = "http://mock-idp:9980"

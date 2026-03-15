@@ -72,7 +72,8 @@ cache stores resolved mappings for fast reverse lookups (`getpwuid`).
 ```toml
 [scim]
 base_url = "https://example.okta.com/scim/v2"
-bearer_token = "your-scim-token"
+# bearer_token_file defaults to /etc/sssd-oidc/scim-token
+# bearer_token_file = "/etc/sssd-oidc/scim-token"
 
 [oidc]
 issuer_url = "https://example.okta.com"

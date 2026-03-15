@@ -6,6 +6,9 @@ use tracing::info;
 /// Default config file path.
 const DEFAULT_CONFIG_PATH: &str = "/etc/sssd-oidc/config.toml";
 
+/// Default bearer token file path.
+const DEFAULT_BEARER_TOKEN_PATH: &str = "/etc/sssd-oidc/scim-token";
+
 /// Environment variable to override the config file path.
 const CONFIG_ENV_VAR: &str = "SSSD_OIDC_CONFIG";
 
@@ -18,6 +21,8 @@ pub enum ConfigError {
     },
     #[error("failed to parse config: {0}")]
     Parse(#[from] toml::de::Error),
+    #[error("insecure permissions on {path}: {detail}")]
+    InsecurePermissions { path: PathBuf, detail: String },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -36,8 +41,17 @@ pub struct Config {
 pub struct ScimConfig {
     /// Base URL for the SCIM 2.0 endpoint (e.g. `https://example.okta.com/scim/v2`).
     pub base_url: String,
-    /// Bearer token for SCIM API authentication.
+    /// Path to file containing the SCIM bearer token (default: `/etc/sssd-oidc/scim-token`).
+    /// The file must be owned by root and have mode 0600 or 0400.
+    #[serde(default = "default_bearer_token_file")]
+    pub bearer_token_file: PathBuf,
+    /// Populated at load time from `bearer_token_file`; not deserialized from TOML.
+    #[serde(skip)]
     pub bearer_token: String,
+}
+
+fn default_bearer_token_file() -> PathBuf {
+    PathBuf::from(DEFAULT_BEARER_TOKEN_PATH)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -150,30 +164,159 @@ impl Config {
             path: path.to_owned(),
             source,
         })?;
-        let config: Config = toml::from_str(&contents)?;
+        let mut config: Config = toml::from_str(&contents)?;
+
+        let token_path = &config.scim.bearer_token_file;
+        check_secret_file_permissions(token_path)?;
+
+        let token = std::fs::read_to_string(token_path).map_err(|source| ConfigError::Read {
+            path: token_path.to_owned(),
+            source,
+        })?;
+        config.scim.bearer_token = token.trim().to_string();
+
         info!(path = %path.display(), "configuration loaded");
         Ok(config)
     }
 }
 
+/// Verify that a secrets file has restrictive permissions.
+///
+/// Refuses to proceed if the file is not a regular file, or if group/other
+/// bits are set (i.e. anything more permissive than `0600`). On Linux,
+/// also requires root ownership.
+///
+/// Follows the same pattern as OpenSSH's private-key check and SSSD's
+/// config-file check — hard fail, actionable error message.
+#[cfg(unix)]
+fn check_secret_file_permissions(path: &Path) -> Result<(), ConfigError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let meta = std::fs::symlink_metadata(path).map_err(|source| ConfigError::Read {
+        path: path.to_owned(),
+        source,
+    })?;
+
+    if !meta.is_file() {
+        return Err(ConfigError::InsecurePermissions {
+            path: path.to_owned(),
+            detail: "not a regular file".into(),
+        });
+    }
+
+    let mode = meta.mode();
+    if mode & 0o077 != 0 {
+        return Err(ConfigError::InsecurePermissions {
+            path: path.to_owned(),
+            detail: format!(
+                "permissions {:04o} are too open; must not be accessible by group or others. \
+                 Run: chmod 600 {}",
+                mode & 0o777,
+                path.display()
+            ),
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    if meta.uid() != 0 {
+        return Err(ConfigError::InsecurePermissions {
+            path: path.to_owned(),
+            detail: format!(
+                "owned by uid {} but must be owned by root (uid 0)",
+                meta.uid()
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn check_secret_file_permissions(_path: &Path) -> Result<(), ConfigError> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
-    #[test]
-    fn parse_minimal_config() {
-        let toml = r#"
+    /// Helper: create a temp token file with mode 0600 and return it + its path string.
+    fn make_token_file(token: &str) -> NamedTempFile {
+        let mut f = NamedTempFile::new().expect("create temp token file");
+        f.write_all(token.as_bytes()).unwrap();
+        f.flush().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(f.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        f
+    }
+
+    /// Helper: write a config toml pointing at the given token file, load it.
+    fn load_test_config(token_path: &Path) -> Config {
+        let toml_content = format!(
+            r#"
 [scim]
 base_url = "https://example.okta.com/scim/v2"
-bearer_token = "test-token"
+bearer_token_file = "{}"
 
 [oidc]
 issuer_url = "https://example.okta.com"
 client_id = "my-client"
-"#;
-        let config: Config = toml::from_str(toml).unwrap();
+"#,
+            token_path.display()
+        );
+        let mut cfg_file = NamedTempFile::new().expect("create temp config");
+        cfg_file.write_all(toml_content.as_bytes()).unwrap();
+        cfg_file.flush().unwrap();
+        Config::load_from(cfg_file.path()).expect("load config")
+    }
+
+    #[test]
+    fn parse_minimal_config() {
+        let token_file = make_token_file("test-token");
+        let config = load_test_config(token_file.path());
         assert_eq!(config.scim.base_url, "https://example.okta.com/scim/v2");
+        assert_eq!(config.scim.bearer_token, "test-token");
         assert_eq!(config.mapping.uid_range_min, 200_000);
         assert_eq!(config.user_defaults.shell, "/bin/bash");
+    }
+
+    #[test]
+    fn token_file_whitespace_trimmed() {
+        let token_file = make_token_file("  my-token\n");
+        let config = load_test_config(token_file.path());
+        assert_eq!(config.scim.bearer_token, "my-token");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_world_readable_token_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let token_file = make_token_file("secret");
+        std::fs::set_permissions(token_file.path(), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        let toml_content = format!(
+            r#"
+[scim]
+base_url = "https://example.com/scim/v2"
+bearer_token_file = "{}"
+
+[oidc]
+issuer_url = "https://example.com"
+client_id = "test"
+"#,
+            token_file.path().display()
+        );
+        let mut cfg_file = NamedTempFile::new().unwrap();
+        cfg_file.write_all(toml_content.as_bytes()).unwrap();
+        cfg_file.flush().unwrap();
+        let err = Config::load_from(cfg_file.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("too open"), "expected 'too open' in: {msg}");
+        assert!(msg.contains("0644"), "expected '0644' in: {msg}");
     }
 }

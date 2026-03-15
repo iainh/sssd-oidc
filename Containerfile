@@ -42,6 +42,8 @@ RUN chmod 600 /etc/sssd/sssd.conf
 # sssd-oidc config
 RUN mkdir -p /etc/sssd-oidc
 COPY test/config.toml /etc/sssd-oidc/config.toml
+RUN echo -n "test-bearer-token" > /etc/sssd-oidc/scim-token && \
+    chmod 600 /etc/sssd-oidc/scim-token
 
 # Cache directory
 RUN mkdir -p /var/lib/sssd-oidc

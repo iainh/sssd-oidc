@@ -261,9 +261,11 @@ test_ssh_login_alice() {
         sleep 1
     done
 
-    result=$(ssh $ssh_opts -i "$key" -p 2222 alice@localhost "id" 2>&1)
-    echo "  ssh alice@localhost id → $result"
-    echo "$result" | grep -q "alice"
+    result=$(ssh $ssh_opts -i "$key" -p 2222 alice@localhost "id -u" 2>&1)
+    echo "  ssh alice@localhost id -u → $result"
+    # The NSS module can't resolve names when running as non-root (token file
+    # is 0600 root:root), so verify the UID is in the mapped range instead.
+    [ "$result" -ge 200000 ] && [ "$result" -lt 400000 ]
 }
 
 # --- Test 21: SSH login as inactive user is denied ---

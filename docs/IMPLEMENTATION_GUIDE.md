@@ -5,9 +5,12 @@ how to test each one, and how to know when it's done. Features are ordered by
 dependency — complete them top-to-bottom. Each feature is a standalone unit of
 work suitable for an LLM coding agent.
 
-The end-goal acceptance test is: a Podman container running SSSD in proxy mode
-can resolve a user via `getent passwd <name>` and authenticate via
-`pamtester` against a test OIDC provider (Keycloak in a sidecar container).
+The end-goal acceptance test is: a container running the NSS/PAM modules can
+resolve users via `getent passwd <name>`, authenticate via `pamtester`, and
+accept SSH logins for OIDC-resolved users — all against a mock IdP sidecar.
+
+**Status: All features complete.** Run `./test/e2e-container-test.sh` to
+verify (22 tests covering NSS, PAM, offline fallback, and SSH login).
 
 ---
 
@@ -23,14 +26,17 @@ can resolve a user via `getent passwd <name>` and authenticate via
 | Service façade (SCIM → model + cache) | ✅ Complete | `src/service.rs` |
 | NSS passwd FFI (Feature 1) | ✅ Complete | `crates/nss_oidc/src/passwd.rs`, `state.rs` |
 | NSS group FFI (Feature 2) | ✅ Complete | `crates/nss_oidc/src/group.rs` |
-| NSS FFI exports (symbol stubs) | ✅ Stubs only | `crates/nss_oidc/src/` |
-| PAM FFI exports (symbol stubs) | ✅ Stubs only | `crates/pam_oidc/src/` |
+| NSS FFI exports (all symbols) | ✅ Complete | `crates/nss_oidc/src/ffi.rs` |
+| PAM FFI exports (all symbols) | ✅ Complete | `crates/pam_oidc/src/ffi.rs` |
 | E2E test infra (wiremock mock IdP) | ✅ Complete | `crates/e2e/tests/` |
 | OIDC Discovery (Feature 3) | ✅ Complete | `src/oidc.rs` |
 | OIDC Device Code (Feature 4) | ✅ Complete | `src/oidc.rs` |
 | PAM authenticate (Feature 5) | ✅ Complete | `crates/pam_oidc/src/ffi.rs`, `pam_conv.rs` |
 | Access control (Feature 6) | ✅ Complete | `src/service.rs`, `crates/pam_oidc/src/ffi.rs` |
 | NSS Enumeration (Feature 7) | ✅ Complete | `src/scim.rs`, `crates/nss_oidc/src/ffi.rs` |
+| Container build (Feature 8) | ✅ Complete | `Containerfile` |
+| Mock IdP container (Feature 9) | ✅ Complete | `crates/mock-idp/`, `test/docker-compose.yml` |
+| E2E container test suite (Feature 10) | ✅ Complete | `test/e2e-container-test.sh` (22 tests incl. SSH) |
 | All existing tests passing | ✅ 31 tests pass | `cargo test --workspace` |
 
 ---
@@ -636,7 +642,7 @@ the sssd-oidc container, with pre-provisioned test users.
    ```toml
    [scim]
    base_url = "http://keycloak:8080/realms/test-realm/scim/v2"
-   bearer_token = "<admin-token>"
+   bearer_token_file = "/etc/sssd-oidc/scim-token"
 
    [oidc]
    issuer_url = "http://keycloak:8080/realms/test-realm"

@@ -7,11 +7,12 @@ use sssd_oidc::scim::ScimClient;
 use sssd_oidc::service::Service;
 
 fn make_service(scim_base_url: &str, oidc_issuer_url: &str) -> Service {
-    let (_config_file, config) = test_config(scim_base_url, oidc_issuer_url);
+    let (_config_file, _token_file, config) = test_config(scim_base_url, oidc_issuer_url);
     let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
     let cache = Cache::open_in_memory().unwrap();
-    // Leak the config file handle so it stays alive for the duration of the test.
+    // Leak the temp file handles so they stay alive for the duration of the test.
     std::mem::forget(_config_file);
+    std::mem::forget(_token_file);
     Service::new(config, scim, cache)
 }
 
@@ -185,7 +186,8 @@ async fn acct_mgmt_falls_back_to_cache_on_scim_error() {
         // Populate cache
         let _ = svc.lookup_user_by_name("alice").unwrap();
         // Now create a service pointing at a dead URL to simulate SCIM outage
-        let (_config_file, config) = test_config("http://127.0.0.1:1", "http://127.0.0.1:1");
+        let (_config_file, _token_file, config) =
+            test_config("http://127.0.0.1:1", "http://127.0.0.1:1");
         let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
         // Re-use the same cache (in-memory won't work across services, but the
         // test_config uses ":memory:" which creates a new DB. We need a shared cache.)
@@ -207,6 +209,7 @@ async fn acct_mgmt_falls_back_to_cache_on_scim_error() {
         cache.store_user(&user).unwrap();
         let svc2 = Service::new(config, scim, cache);
         std::mem::forget(_config_file);
+        std::mem::forget(_token_file);
         svc2.check_user_active("alice").unwrap()
     })
     .await
@@ -236,7 +239,8 @@ async fn is_online_returns_true_when_scim_reachable() {
 /// Health check: SCIM endpoint unreachable.
 #[tokio::test(flavor = "multi_thread")]
 async fn is_online_returns_false_when_scim_unreachable() {
-    let (_config_file, config) = test_config("http://127.0.0.1:1", "http://127.0.0.1:1");
+    let (_config_file, _token_file, config) =
+        test_config("http://127.0.0.1:1", "http://127.0.0.1:1");
     let svc = tokio::task::spawn_blocking(move || {
         let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
         let cache = Cache::open_in_memory().unwrap();

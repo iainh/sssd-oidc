@@ -27,14 +27,15 @@ async fn ensure_init() {
     INIT.get_or_init(|| async {
         let idp = MockIdp::start().await;
         let base_url = idp.base_url();
-        let (config_file, _config) = test_config(&base_url, &base_url);
+        let (config_file, token_file, _config) = test_config(&base_url, &base_url);
         // SAFETY: we are in test code; init runs once before any concurrent access
         unsafe {
             std::env::set_var("SSSD_OIDC_CONFIG", config_file.path());
         }
-        // Leak both so they live for the process lifetime
+        // Leak all so they live for the process lifetime
         std::mem::forget(idp);
         std::mem::forget(config_file);
+        std::mem::forget(token_file);
     })
     .await;
 }
