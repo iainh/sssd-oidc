@@ -1,0 +1,22 @@
+services:
+  mock-idp:
+    build:
+      context: ..
+      dockerfile: Containerfile
+    command: ["/usr/local/bin/mock-idp"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9980/.well-known/openid-configuration || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  sssd-oidc:
+    build:
+      context: ..
+      dockerfile: Containerfile
+    depends_on:
+      mock-idp:
+        condition: service_healthy
+    environment:
+      SSSD_OIDC_CONFIG: /etc/sssd-oidc/config.toml
+    command: ["/bin/sleep", "infinity"]

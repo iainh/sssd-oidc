@@ -38,9 +38,15 @@
 
             # PAM headers for pam_oidc crate
             pkgs.pam
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            # Container runtime for integration testing (macOS)
+            pkgs.colima
+            pkgs.docker-client
+            pkgs.docker-compose
           ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-            # Container runtime for integration testing (Linux only)
+            # Container runtime for integration testing (Linux)
             pkgs.podman
+            pkgs.podman-compose # orchestrate container E2E tests
             pkgs.slirp4netns   # rootless networking for podman
             pkgs.fuse-overlayfs # rootless storage driver
 
@@ -50,6 +56,9 @@
 
           shellHook = ''
             echo "sssd-oidc devshell — Rust $(rustc --version | cut -d' ' -f2)"
+            ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+              echo "  colima $(colima version | head -1)"
+            ''}
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               echo "  podman $(podman --version | cut -d' ' -f3)"
             ''}

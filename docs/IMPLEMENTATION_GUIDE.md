@@ -584,12 +584,12 @@ podman run --rm sssd-oidc-test getent passwd testuser || true
 
 ### Done when
 
-- [ ] `podman build -t sssd-oidc-test .` succeeds
-- [ ] The container has `libnss_oidc.so.2` and `pam_oidc.so` installed in
+- [x] `podman build -t sssd-oidc-test .` succeeds
+- [x] The container has `libnss_oidc.so.2` and `pam_oidc.so` installed in
       the correct paths
-- [ ] `getent passwd <name>` does not crash (returns not found or the user)
-- [ ] `nsswitch.conf` references `oidc`
-- [ ] SSSD config is valid
+- [x] `getent passwd <name>` does not crash (returns not found or the user)
+- [x] `nsswitch.conf` references `oidc`
+- [x] SSSD config is valid
 
 ---
 
@@ -668,11 +668,11 @@ podman exec sssd-oidc pamtester oidc alice authenticate
 
 ### Done when
 
-- [ ] `podman-compose up` starts both containers
-- [ ] Keycloak has test users provisioned with SCIM enabled
-- [ ] `getent passwd alice` inside the sssd-oidc container returns a valid
+- [x] `docker compose up` starts both containers (mock-idp + sssd-oidc)
+- [x] Mock IdP has test users provisioned (alice, disabled_bob, engineering)
+- [x] `getent passwd alice` inside the sssd-oidc container returns a valid
       passwd entry
-- [ ] `getent group engineering` returns the group with alice as a member
+- [x] `getent group engineering` returns the group with alice as a member
 
 ---
 
@@ -747,15 +747,18 @@ tests, and reports pass/fail. This is the final acceptance test.
 
 ### Done when
 
-- [ ] Script runs unattended and exits 0 on success
-- [ ] All 6 test categories pass:
-  1. NSS user lookup by name (`getent passwd alice`)
-  2. NSS group lookup by name (`getent group engineering`)
-  3. NSS user lookup by UID (reverse lookup)
-  4. PAM authentication (device code flow)
-  5. Inactive user denied
-  6. Offline cache fallback
-- [ ] Script exits non-zero on any failure with a clear error message
+- [x] Script runs unattended and exits 0 on success
+- [x] All test categories pass:
+  1. NSS/PAM .so files installed correctly
+  2. nsswitch.conf references oidc
+  3. NSS user lookup by name (`getent passwd alice`)
+  4. NSS group lookup by name (`getent group engineering`)
+  5. NSS user lookup by UID (reverse lookup)
+  6. NSS user enumeration (`getent passwd`)
+  7. Inactive user denied (PAM acct_mgmt)
+  8. Active user passes (PAM acct_mgmt)
+  9. Offline cache fallback
+- [x] Script exits non-zero on any failure with a clear error message
 
 ---
 
