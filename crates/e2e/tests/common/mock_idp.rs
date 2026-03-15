@@ -1,3 +1,5 @@
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode, jwk};
+use serde::Serialize;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -5,6 +7,18 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 #[allow(dead_code)]
 pub struct MockIdp {
     pub server: MockServer,
+    encoding_key: EncodingKey,
+    jwks_json: serde_json::Value,
+}
+
+/// Standard OIDC ID token claims for test JWTs.
+#[derive(Serialize)]
+struct TestClaims<'a> {
+    sub: &'a str,
+    iss: String,
+    aud: &'a str,
+    exp: u64,
+    iat: u64,
 }
 
 #[allow(dead_code)]
@@ -12,6 +26,26 @@ impl MockIdp {
     /// Start a mock server with a single test user and group.
     pub async fn start() -> Self {
         let server = MockServer::start().await;
+
+        // Generate an RSA key pair for signing test JWTs.
+        let encoding_key = EncodingKey::from_rsa_pem(include_bytes!("test_rsa_key.pem")).unwrap();
+        let jwk_from_key = jwk::Jwk::from_encoding_key(&encoding_key, Algorithm::RS256).unwrap();
+        let jwks_json = serde_json::json!({
+            "keys": [{
+                "kty": "RSA",
+                "use": "sig",
+                "alg": "RS256",
+                "kid": "test-key-1",
+                "n": match &jwk_from_key.algorithm {
+                    jwk::AlgorithmParameters::RSA(p) => &p.n,
+                    _ => unreachable!(),
+                },
+                "e": match &jwk_from_key.algorithm {
+                    jwk::AlgorithmParameters::RSA(p) => &p.e,
+                    _ => unreachable!(),
+                },
+            }]
+        });
 
         // SCIM: GET /Users?filter=userName eq "alice"
         Mock::given(method("GET"))
@@ -171,12 +205,45 @@ impl MockIdp {
             .mount(&server)
             .await;
 
-        Self { server }
+        // OIDC: GET /jwks — serve the RSA public key
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(jwks_json.clone()))
+            .mount(&server)
+            .await;
+
+        Self {
+            server,
+            encoding_key,
+            jwks_json,
+        }
+    }
+
+    /// Sign a test ID token JWT with the mock IdP's RSA key.
+    ///
+    /// The `client_id` is set to `"test-client-id"` to match the test config.
+    fn sign_id_token(&self, subject: &str) -> String {
+        let now = jsonwebtoken::get_current_timestamp();
+        let claims = TestClaims {
+            sub: subject,
+            iss: self.server.uri(),
+            aud: "test-client-id",
+            exp: now + 3600,
+            iat: now,
+        };
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("test-key-1".to_string());
+        encode(&header, &claims, &self.encoding_key).unwrap()
     }
 
     /// Mount device code flow mocks: POST /device returns a device code,
     /// POST /token returns authorization_pending once then succeeds.
-    pub async fn mount_device_code_flow(&self) {
+    ///
+    /// The ID token `sub` claim is set to `subject` so callers can control
+    /// which identity the token represents.
+    pub async fn mount_device_code_flow(&self, subject: &str) {
+        let id_token = self.sign_id_token(subject);
+
         // POST /device → returns device code
         Mock::given(method("POST"))
             .and(path("/device"))
@@ -208,7 +275,7 @@ impl MockIdp {
             .and(path("/token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "access_token": "test-access-token-001",
-                "id_token": "test-id-token-001",
+                "id_token": id_token,
                 "token_type": "Bearer"
             })))
             .mount(&self.server)

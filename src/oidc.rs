@@ -16,6 +16,14 @@ pub enum OidcError {
     ExpiredToken,
     #[error("token request denied: {0}")]
     TokenError(String),
+    #[error("ID token missing from response")]
+    MissingIdToken,
+    #[error("ID token subject \"{token_sub}\" does not match user \"{expected}\"")]
+    SubjectMismatch { token_sub: String, expected: String },
+    #[error("failed to decode ID token: {0}")]
+    IdTokenDecode(String),
+    #[error("JWT validation failed: {0}")]
+    JwtValidation(#[from] jsonwebtoken::errors::Error),
 }
 
 /// Endpoints parsed from the OIDC discovery document.
@@ -24,6 +32,7 @@ pub struct OidcEndpoints {
     pub device_authorization_endpoint: String,
     pub token_endpoint: String,
     pub issuer: String,
+    pub jwks_uri: String,
 }
 
 /// Response from the device authorization endpoint (RFC 8628 §3.2).
@@ -70,6 +79,7 @@ struct DiscoveryDocument {
     issuer: Option<String>,
     token_endpoint: Option<String>,
     device_authorization_endpoint: Option<String>,
+    jwks_uri: Option<String>,
 }
 
 impl OidcClient {
@@ -97,6 +107,9 @@ impl OidcClient {
         let device_authorization_endpoint = doc
             .device_authorization_endpoint
             .ok_or_else(|| OidcError::MissingField("device_authorization_endpoint".into()))?;
+        let jwks_uri = doc
+            .jwks_uri
+            .ok_or_else(|| OidcError::MissingField("jwks_uri".into()))?;
 
         info!(issuer = issuer, "OIDC discovery complete");
         Ok(Self {
@@ -105,6 +118,7 @@ impl OidcClient {
                 device_authorization_endpoint,
                 token_endpoint,
                 issuer,
+                jwks_uri,
             },
             client_id: client_id.to_string(),
             client_secret: client_secret.map(String::from),
@@ -222,5 +236,129 @@ impl OidcClient {
                 Err(e) => return Err(e),
             }
         }
+    }
+
+    /// Validate an ID token's signature, expiry, issuer, and audience using
+    /// the IdP's JWKS, then return the validated claims.
+    ///
+    /// Fetches the JWKS from the discovered `jwks_uri`, selects the key
+    /// matching the token's `kid` header, and validates per OIDC Core §3.1.3.7.
+    pub fn validate_id_token(&self, id_token: &str) -> Result<IdTokenClaims, OidcError> {
+        use jsonwebtoken::{DecodingKey, Validation, decode, decode_header};
+
+        let header = decode_header(id_token)?;
+
+        // Fetch the JWKS from the IdP
+        let jwks: jsonwebtoken::jwk::JwkSet = self
+            .http
+            .get(&self.endpoints.jwks_uri)
+            .send()?
+            .error_for_status()?
+            .json()?;
+
+        // Find the key matching the token's kid
+        let jwk = match &header.kid {
+            Some(kid) => jwks
+                .find(kid)
+                .ok_or_else(|| OidcError::IdTokenDecode(format!("no JWK with kid \"{kid}\"")))?,
+            None => jwks
+                .keys
+                .first()
+                .ok_or_else(|| OidcError::IdTokenDecode("JWKS is empty".into()))?,
+        };
+
+        let decoding_key = DecodingKey::from_jwk(jwk)?;
+
+        let alg = header.alg;
+        let mut validation = Validation::new(alg);
+        validation.set_issuer(&[&self.endpoints.issuer]);
+        validation.set_audience(&[&self.client_id]);
+        // Require sub, exp, iss, aud
+        validation.set_required_spec_claims(&["sub", "exp", "iss"]);
+        // aud validation is handled by validate_aud + set_audience above
+        validation.validate_exp = true;
+
+        let token_data = decode::<IdTokenClaims>(id_token, &decoding_key, &validation)?;
+
+        info!(sub = %token_data.claims.sub, "ID token validated successfully");
+        Ok(token_data.claims)
+    }
+}
+
+/// Validated ID token claims (OIDC Core §2).
+#[derive(Debug, Clone, Deserialize)]
+pub struct IdTokenClaims {
+    /// Subject identifier — unique ID for the authenticated user.
+    pub sub: String,
+    /// Issuer URL.
+    pub iss: String,
+    /// Audience (client_id).
+    pub aud: serde_json::Value,
+    /// Expiration time (UTC timestamp).
+    pub exp: u64,
+    /// Issued-at time (UTC timestamp).
+    #[serde(default)]
+    pub iat: Option<u64>,
+}
+
+/// Decode the payload of a JWT ID token (without cryptographic verification)
+/// and extract the `sub` claim.
+///
+/// We skip signature verification because the token was received over TLS
+/// directly from the IdP's token endpoint.
+pub fn extract_id_token_subject(id_token: &str) -> Result<String, OidcError> {
+    use base64::prelude::*;
+
+    let parts: Vec<&str> = id_token.splitn(3, '.').collect();
+    if parts.len() < 2 {
+        return Err(OidcError::IdTokenDecode("not a valid JWT".into()));
+    }
+
+    let payload_bytes = BASE64_URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .map_err(|e| OidcError::IdTokenDecode(format!("base64: {e}")))?;
+
+    #[derive(Deserialize)]
+    struct Claims {
+        sub: Option<String>,
+    }
+
+    let claims: Claims = serde_json::from_slice(&payload_bytes)
+        .map_err(|e| OidcError::IdTokenDecode(format!("json: {e}")))?;
+
+    claims
+        .sub
+        .ok_or_else(|| OidcError::IdTokenDecode("missing sub claim".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::prelude::*;
+
+    fn make_jwt(claims_json: &str) -> String {
+        let header = BASE64_URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256"}"#);
+        let payload = BASE64_URL_SAFE_NO_PAD.encode(claims_json);
+        format!("{header}.{payload}.fake-signature")
+    }
+
+    #[test]
+    fn extract_subject_from_valid_jwt() {
+        let jwt = make_jwt(r#"{"sub":"user-uuid-alice-001","iss":"https://idp.example.com"}"#);
+        let sub = extract_id_token_subject(&jwt).unwrap();
+        assert_eq!(sub, "user-uuid-alice-001");
+    }
+
+    #[test]
+    fn extract_subject_missing_sub_claim() {
+        let jwt = make_jwt(r#"{"iss":"https://idp.example.com"}"#);
+        let err = extract_id_token_subject(&jwt).unwrap_err();
+        assert!(err.to_string().contains("missing sub claim"));
+    }
+
+    #[test]
+    fn extract_subject_invalid_jwt_format() {
+        let err = extract_id_token_subject("not-a-jwt").unwrap_err();
+        assert!(err.to_string().contains("not a valid JWT"));
     }
 }

@@ -37,8 +37,11 @@ pub unsafe extern "C" fn pam_sm_authenticate(
 fn authenticate_impl(pamh: *mut PamHandle) -> c_int {
     sssd_oidc::logging::init("pam_oidc", sssd_oidc::logging::FACILITY_AUTHPRIV);
 
+    use sssd_oidc::cache::Cache;
     use sssd_oidc::config::Config;
     use sssd_oidc::oidc::OidcClient;
+    use sssd_oidc::scim::ScimClient;
+    use sssd_oidc::service::Service;
 
     let username = match unsafe { crate::pam_conv::get_pam_user(pamh) } {
         Ok(u) => u,
@@ -80,10 +83,63 @@ fn authenticate_impl(pamh: *mut PamHandle) -> c_int {
     });
 
     match result {
-        Ok(_token) => {
-            // TODO: optionally verify token subject matches username
-            info!(user = %username, "authentication successful");
-            PAM_SUCCESS
+        Ok(token) => {
+            let id_token_raw = match token.id_token.as_deref() {
+                Some(t) => t,
+                None => {
+                    warn!(user = %username, "ID token missing — cannot verify subject");
+                    return PAM_AUTH_ERR;
+                }
+            };
+
+            // Validate JWT signature, expiry, issuer, and audience via JWKS.
+            let claims = match client.validate_id_token(id_token_raw) {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!(user = %username, error = %e, "ID token validation failed");
+                    return PAM_AUTH_ERR;
+                }
+            };
+
+            let sub = &claims.sub;
+
+            // Verify that the authenticated OIDC subject matches the PAM user.
+            // Accept a match if sub == username (simple setups) or if the SCIM
+            // user's external id matches the token subject (federated setups
+            // where sub is a UUID).
+            if sub == &username {
+                info!(user = %username, "authentication successful (direct subject match)");
+                return PAM_SUCCESS;
+            }
+
+            let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
+            let cache = match Cache::open(&config.cache.db_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!(error = %e, "failed to open cache for subject verification");
+                    return PAM_AUTH_ERR;
+                }
+            };
+            let svc = Service::new(config, scim, cache);
+
+            match svc.lookup_user_by_name(&username) {
+                Ok(Some(user)) if user.external_id == *sub => {
+                    info!(user = %username, sub = %sub, "authentication successful (SCIM id match)");
+                    PAM_SUCCESS
+                }
+                Ok(Some(_)) => {
+                    warn!(user = %username, sub = %sub, "token subject does not match user");
+                    PAM_AUTH_ERR
+                }
+                Ok(None) => {
+                    warn!(user = %username, "user not found in SCIM during subject verification");
+                    PAM_AUTH_ERR
+                }
+                Err(e) => {
+                    warn!(user = %username, error = %e, "SCIM lookup failed during subject verification");
+                    PAM_AUTH_ERR
+                }
+            }
         }
         Err(e) => {
             warn!(user = %username, error = %e, "authentication failed");
