@@ -113,7 +113,7 @@ fn authenticate_impl(pamh: *mut PamHandle) -> c_int {
             }
 
             let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
-            let cache = match Cache::open(&config.cache.db_path) {
+            let cache = match Cache::open(&config.cache.db_path, config.cache.ttl_seconds) {
                 Ok(c) => c,
                 Err(e) => {
                     warn!(error = %e, "failed to open cache for subject verification");
@@ -258,7 +258,7 @@ fn acct_mgmt_impl(pamh: *mut PamHandle) -> c_int {
     };
 
     let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
-    let cache = match Cache::open(&config.cache.db_path) {
+    let cache = match Cache::open(&config.cache.db_path, config.cache.ttl_seconds) {
         Ok(c) => c,
         Err(e) => {
             warn!(error = %e, "failed to open cache");

@@ -26,7 +26,7 @@ pub(crate) fn get_service() -> Option<&'static Mutex<Service>> {
                 }
             };
             let scim = ScimClient::new(&config.scim.base_url, &config.scim.bearer_token);
-            let cache = match Cache::open(&config.cache.db_path) {
+            let cache = match Cache::open(&config.cache.db_path, config.cache.ttl_seconds) {
                 Ok(c) => c,
                 Err(e) => {
                     warn!(error = %e, "failed to open cache");

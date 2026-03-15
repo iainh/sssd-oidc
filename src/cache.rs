@@ -22,12 +22,14 @@ impl From<IdRangeExhausted> for CacheError {
 /// SQLite-backed local cache for UID/GID reverse lookups.
 pub struct Cache {
     conn: Connection,
+    /// Cache entry TTL in seconds. Entries older than this are treated as misses.
+    ttl_seconds: u64,
 }
 
 impl Cache {
     /// Open (or create) the cache database at the given path.
-    pub fn open(path: &str) -> Result<Self, CacheError> {
-        info!(path, "opening cache database");
+    pub fn open(path: &str, ttl_seconds: u64) -> Result<Self, CacheError> {
+        info!(path, ttl_seconds, "opening cache database");
         let conn = Connection::open(path)?;
         conn.execute_batch(
             "
@@ -59,12 +61,12 @@ impl Cache {
             );
             ",
         )?;
-        Ok(Self { conn })
+        Ok(Self { conn, ttl_seconds })
     }
 
     /// Open an in-memory cache (useful for tests).
     pub fn open_in_memory() -> Result<Self, CacheError> {
-        Self::open(":memory:")
+        Self::open(":memory:", 3600)
     }
 
     /// Resolve a collision-free UID for `external_id` using linear probing.
@@ -142,13 +144,13 @@ impl Cache {
         Ok(())
     }
 
-    /// Look up a user by UID from the cache.
+    /// Look up a user by UID from the cache (respects TTL).
     pub fn get_user_by_uid(&self, uid: u32) -> Result<Option<User>, CacheError> {
         let mut stmt = self.conn.prepare(
             "SELECT external_id, login, uid, gid, gecos, home, shell, active
-             FROM uid_cache WHERE uid = ?1",
+             FROM uid_cache WHERE uid = ?1 AND cached_at > strftime('%s', 'now') - ?2",
         )?;
-        let mut rows = stmt.query_map([uid], |row| {
+        let mut rows = stmt.query_map(rusqlite::params![uid, self.ttl_seconds], |row| {
             Ok(User {
                 external_id: row.get(0)?,
                 name: row.get(1)?,
@@ -172,13 +174,13 @@ impl Cache {
         }
     }
 
-    /// Look up a user by login name from the cache.
+    /// Look up a user by login name from the cache (respects TTL).
     pub fn get_user_by_name(&self, name: &str) -> Result<Option<User>, CacheError> {
         let mut stmt = self.conn.prepare(
             "SELECT external_id, login, uid, gid, gecos, home, shell, active
-             FROM uid_cache WHERE login = ?1",
+             FROM uid_cache WHERE login = ?1 AND cached_at > strftime('%s', 'now') - ?2",
         )?;
-        let mut rows = stmt.query_map([name], |row| {
+        let mut rows = stmt.query_map(rusqlite::params![name, self.ttl_seconds], |row| {
             Ok(User {
                 external_id: row.get(0)?,
                 name: row.get(1)?,
@@ -224,12 +226,13 @@ impl Cache {
         Ok(())
     }
 
-    /// Look up a group by GID from the cache.
+    /// Look up a group by GID from the cache (respects TTL).
     pub fn get_group_by_gid(&self, gid: u32) -> Result<Option<Group>, CacheError> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT external_id, name, gid FROM gid_cache WHERE gid = ?1")?;
-        let mut rows = stmt.query_map([gid], |row| {
+        let mut stmt = self.conn.prepare(
+            "SELECT external_id, name, gid FROM gid_cache
+             WHERE gid = ?1 AND cached_at > strftime('%s', 'now') - ?2",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![gid, self.ttl_seconds], |row| {
             Ok(Group {
                 external_id: row.get(0)?,
                 name: row.get(1)?,
@@ -251,12 +254,13 @@ impl Cache {
         }
     }
 
-    /// Look up a group by name from the cache.
+    /// Look up a group by name from the cache (respects TTL).
     pub fn get_group_by_name(&self, name: &str) -> Result<Option<Group>, CacheError> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT external_id, name, gid FROM gid_cache WHERE name = ?1")?;
-        let mut rows = stmt.query_map([name], |row| {
+        let mut stmt = self.conn.prepare(
+            "SELECT external_id, name, gid FROM gid_cache
+             WHERE name = ?1 AND cached_at > strftime('%s', 'now') - ?2",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![name, self.ttl_seconds], |row| {
             Ok(Group {
                 external_id: row.get(0)?,
                 name: row.get(1)?,

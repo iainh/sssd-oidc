@@ -32,6 +32,10 @@ pub struct Service {
 
 impl Service {
     pub fn new(config: Config, scim: ScimClient, cache: Cache) -> Self {
+        let ttl = config.cache.ttl_seconds;
+        if let Err(e) = cache.purge_expired(ttl) {
+            warn!(error = %e, "failed to purge expired cache entries on startup");
+        }
         Self {
             scim,
             cache,
