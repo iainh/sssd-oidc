@@ -95,7 +95,10 @@ impl OidcClient {
             "{}/.well-known/openid-configuration",
             issuer_url.trim_end_matches('/')
         );
-        let http = reqwest::blocking::Client::new();
+        let http = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
         let doc: DiscoveryDocument = http.get(&url).send()?.error_for_status()?.json()?;
 
         let issuer = doc

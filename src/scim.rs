@@ -110,8 +110,13 @@ pub struct ScimClient {
 
 impl ScimClient {
     pub fn new(base_url: &str, bearer_token: &str) -> Self {
+        let http = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("failed to build HTTP client");
         Self {
-            http: reqwest::blocking::Client::new(),
+            http,
             base_url: base_url.trim_end_matches('/').to_string(),
             bearer_token: bearer_token.to_string(),
         }
