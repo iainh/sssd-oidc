@@ -61,6 +61,45 @@ struct ListResponse<T> {
     resources: Vec<T>,
 }
 
+/// Escape a value for use in a SCIM 2.0 filter expression (RFC 7644 §3.4.2.2).
+/// Backslash-escapes `\` and `"` characters within the quoted string.
+fn escape_filter_value(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escape_filter_value_handles_plain_string() {
+        assert_eq!(escape_filter_value("alice"), "alice");
+    }
+
+    #[test]
+    fn escape_filter_value_escapes_quotes() {
+        assert_eq!(escape_filter_value(r#"al"ice"#), r#"al\"ice"#);
+    }
+
+    #[test]
+    fn escape_filter_value_escapes_backslashes() {
+        assert_eq!(escape_filter_value(r"al\ice"), r"al\\ice");
+    }
+
+    #[test]
+    fn escape_filter_value_escapes_both() {
+        assert_eq!(escape_filter_value(r#"a\"b"#), r#"a\\\"b"#);
+    }
+}
+
 /// SCIM 2.0 client using `reqwest::blocking`.
 pub struct ScimClient {
     http: reqwest::blocking::Client,
@@ -79,7 +118,8 @@ impl ScimClient {
 
     /// Look up a user by `userName`.
     pub fn get_user_by_name(&self, name: &str) -> Result<Option<ScimUser>, ScimError> {
-        let url = format!("{}/Users?filter=userName eq \"{}\"", self.base_url, name);
+        let escaped = escape_filter_value(name);
+        let url = format!("{}/Users?filter=userName eq \"{}\"", self.base_url, escaped);
         let resp: ListResponse<ScimUser> = self
             .http
             .get(&url)
@@ -103,9 +143,10 @@ impl ScimClient {
 
     /// Look up a group by `displayName`.
     pub fn get_group_by_name(&self, name: &str) -> Result<Option<ScimGroup>, ScimError> {
+        let escaped = escape_filter_value(name);
         let url = format!(
             "{}/Groups?filter=displayName eq \"{}\"",
-            self.base_url, name
+            self.base_url, escaped
         );
         let resp: ListResponse<ScimGroup> = self
             .http
