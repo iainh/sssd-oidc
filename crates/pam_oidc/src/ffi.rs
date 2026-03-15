@@ -5,6 +5,7 @@ pub const PAM_SUCCESS: c_int = 0;
 pub const PAM_AUTH_ERR: c_int = 7;
 pub const PAM_AUTHINFO_UNAVAIL: c_int = 9;
 pub const PAM_PERM_DENIED: c_int = 6;
+pub const PAM_AUTHTOK_ERR: c_int = 20;
 pub const PAM_IGNORE: c_int = 25;
 
 /// PAM handle (opaque — we never dereference it, only pass it through).
@@ -92,6 +93,49 @@ pub unsafe extern "C" fn pam_sm_setcred(
     _argv: *const *const libc::c_char,
 ) -> c_int {
     PAM_SUCCESS
+}
+
+/// Password change — not supported for OIDC.
+///
+/// Returns PAM_AUTHTOK_ERR to indicate the user should change their password
+/// via the IdP's web portal instead.
+///
+/// # Safety
+///
+/// `pamh` must be a valid PAM handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pam_sm_chauthtok(
+    pamh: *mut PamHandle,
+    _flags: c_int,
+    _argc: c_int,
+    _argv: *const *const libc::c_char,
+) -> c_int {
+    chauthtok_impl(pamh)
+}
+
+#[cfg(target_os = "linux")]
+fn chauthtok_impl(pamh: *mut PamHandle) -> c_int {
+    use sssd_oidc::config::Config;
+
+    let config = match Config::load() {
+        Ok(c) => c,
+        Err(_) => return PAM_AUTHTOK_ERR,
+    };
+
+    let msg = format!(
+        "Password changes are not supported via PAM for OIDC accounts.\n\
+         Please change your password at your identity provider:\n  {}",
+        config.oidc.issuer_url
+    );
+    unsafe {
+        crate::pam_conv::pam_info(pamh, &msg);
+    }
+    PAM_AUTHTOK_ERR
+}
+
+#[cfg(not(target_os = "linux"))]
+fn chauthtok_impl(_pamh: *mut PamHandle) -> c_int {
+    PAM_AUTHTOK_ERR
 }
 
 /// Account management — check if user is active/authorized.
