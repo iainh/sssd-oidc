@@ -19,4 +19,6 @@ services:
         condition: service_healthy
     environment:
       SSSD_OIDC_CONFIG: /etc/sssd-oidc/config.toml
-    command: ["/bin/sleep", "infinity"]
+    command: ["/entrypoint.sh"]
+    ports:
+      - "2222:22"

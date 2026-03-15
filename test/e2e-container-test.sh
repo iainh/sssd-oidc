@@ -244,7 +244,55 @@ test_offline_nonexistent_user() {
     fi
 }
 
-# --- Test 20: UID is deterministic across lookups ---
+# --- Test 20: SSH login as alice and verify identity ---
+test_ssh_login_alice() {
+    local ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+    local key="$SCRIPT_DIR/ssh_test_key"
+    local result
+
+    # Wait for sshd to be ready (up to 15s)
+    local i=0
+    while ! ssh $ssh_opts -i "$key" -p 2222 alice@localhost "true" 2>/dev/null; do
+        i=$((i + 1))
+        if [ "$i" -ge 15 ]; then
+            echo "  sshd did not become reachable in time"
+            return 1
+        fi
+        sleep 1
+    done
+
+    result=$(ssh $ssh_opts -i "$key" -p 2222 alice@localhost "id" 2>&1)
+    echo "  ssh alice@localhost id → $result"
+    echo "$result" | grep -q "alice"
+}
+
+# --- Test 21: SSH login as inactive user is denied ---
+test_ssh_login_inactive_denied() {
+    local ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+    local key="$SCRIPT_DIR/ssh_test_key"
+
+    # Set up authorized_keys for disabled_bob too
+    $COMPOSE exec -T sssd-oidc sh -c '
+        BOB_UID=$(getent passwd disabled_bob | cut -d: -f3)
+        BOB_GID=$(getent passwd disabled_bob | cut -d: -f4)
+        BOB_HOME=$(getent passwd disabled_bob | cut -d: -f6)
+        mkdir -p "${BOB_HOME}/.ssh"
+        cp /tmp/ssh_test_key.pub "${BOB_HOME}/.ssh/authorized_keys"
+        chmod 700 "${BOB_HOME}/.ssh"
+        chmod 600 "${BOB_HOME}/.ssh/authorized_keys"
+        chown -R "${BOB_UID}:${BOB_GID}" "${BOB_HOME}"
+    '
+
+    if ssh $ssh_opts -i "$key" -p 2222 disabled_bob@localhost "echo logged_in" 2>&1; then
+        echo "  ERROR: inactive user should have been denied SSH access"
+        return 1
+    else
+        echo "  Correctly denied SSH login for inactive user"
+        return 0
+    fi
+}
+
+# --- Test 22: UID is deterministic across lookups ---  
 test_uid_deterministic() {
     local uid1 uid2
     uid1=$($COMPOSE exec -T sssd-oidc getent passwd alice 2>&1 | cut -d: -f3)
@@ -287,6 +335,8 @@ run_test "Active user passes acct_mgmt"     test_active_user_acct_mgmt
 run_test "id alice (initgroups)"            test_id_alice_groups
 run_test "UID is deterministic"             test_uid_deterministic
 run_test "Passwd field format"              test_passwd_field_format
+run_test "SSH login as alice"               test_ssh_login_alice
+run_test "SSH denied for inactive user"     test_ssh_login_inactive_denied
 run_test "Offline cache fallback"           test_offline_fallback
 run_test "Offline group fallback"           test_offline_group_fallback
 run_test "Offline non-existent user fails"  test_offline_nonexistent_user

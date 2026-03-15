@@ -10,6 +10,7 @@ FROM docker.io/library/debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
         sssd sssd-proxy libpam-runtime libpam-modules pamtester curl \
+        openssh-server \
     && rm -rf /var/lib/apt/lists/*
 
 # Detect multiarch lib directory (works on both x86_64 and aarch64)
@@ -44,5 +45,22 @@ COPY test/config.toml /etc/sssd-oidc/config.toml
 
 # Cache directory
 RUN mkdir -p /var/lib/sssd-oidc
+
+# --- SSH setup for e2e testing ---
+RUN mkdir -p /run/sshd && \
+    ssh-keygen -A
+
+# PAM config for sshd: use pam_oidc for account checks, permit auth
+# (auth is handled by SSH public-key; PAM only does account management)
+RUN echo "auth    sufficient pam_permit.so"  > /etc/pam.d/sshd && \
+    echo "account required   pam_oidc.so"   >> /etc/pam.d/sshd && \
+    echo "session required   pam_permit.so" >> /etc/pam.d/sshd
+
+# Install test SSH key for alice
+COPY test/ssh_test_key.pub /tmp/ssh_test_key.pub
+
+# Entrypoint script that creates the OIDC user home and starts sshd
+COPY test/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 CMD ["/bin/sleep", "infinity"]
