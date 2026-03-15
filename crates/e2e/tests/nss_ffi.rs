@@ -208,6 +208,78 @@ async fn nss_getpwnam_r_returns_tryagain_on_small_buffer() {
     assert_eq!(errnop, ERANGE);
 }
 
+// --- initgroups FFI tests ---
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nss_initgroups_dyn_returns_supplementary_gids() {
+    ensure_init().await;
+
+    let gids = tokio::task::spawn_blocking(|| {
+        let c_name = CString::new("alice").unwrap();
+        let mut groups = vec![0u32; 64];
+        let mut start: libc::c_long = 0;
+        let mut size: libc::c_long = groups.len() as libc::c_long;
+        let mut groups_ptr = groups.as_mut_ptr();
+        let mut errnop: libc::c_int = 0;
+
+        let status = unsafe {
+            nss_oidc::ffi::_nss_oidc_initgroups_dyn(
+                c_name.as_ptr(),
+                0, // primary gid (none to skip)
+                &mut start,
+                &mut size,
+                &mut groups_ptr,
+                0,
+                &mut errnop,
+            )
+        };
+
+        assert_eq!(status, nss_oidc::ffi::NssStatus::Success);
+        assert_eq!(errnop, 0);
+        assert!(start > 0, "should have at least one supplementary group");
+
+        let result: Vec<u32> = groups[..start as usize].to_vec();
+        result
+    })
+    .await
+    .unwrap();
+
+    assert!(!gids.is_empty());
+    assert!(gids.iter().all(|&g| g >= 200_000 && g < 400_000));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nss_initgroups_dyn_returns_success_for_unknown_user() {
+    ensure_init().await;
+
+    let (status, start) = tokio::task::spawn_blocking(|| {
+        let c_name = CString::new("nonexistent").unwrap();
+        let mut groups = vec![0u32; 64];
+        let mut start: libc::c_long = 0;
+        let mut size: libc::c_long = groups.len() as libc::c_long;
+        let mut groups_ptr = groups.as_mut_ptr();
+        let mut errnop: libc::c_int = 0;
+
+        let status = unsafe {
+            nss_oidc::ffi::_nss_oidc_initgroups_dyn(
+                c_name.as_ptr(),
+                0,
+                &mut start,
+                &mut size,
+                &mut groups_ptr,
+                0,
+                &mut errnop,
+            )
+        };
+        (status, start)
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(status, nss_oidc::ffi::NssStatus::Success);
+    assert_eq!(start, 0);
+}
+
 // --- Group FFI tests ---
 
 /// Extracted group fields as safe, owned types.

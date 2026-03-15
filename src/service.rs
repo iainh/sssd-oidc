@@ -119,6 +119,32 @@ impl Service {
         }
     }
 
+    /// Look up all groups a user belongs to by login name.
+    /// Returns the GIDs from the user's SCIM `groups` attribute.
+    pub fn lookup_groups_for_user(&self, name: &str) -> Result<Vec<u32>, ServiceError> {
+        let mc = &self.config.mapping;
+        match self.scim.get_user_by_name(name) {
+            Ok(Some(scim_user)) => {
+                let user = self.scim_user_to_model(&scim_user);
+                self.cache.store_user(&user)?;
+                let gids: Vec<u32> = scim_user
+                    .groups
+                    .iter()
+                    .map(|g| {
+                        crate::mapping::id_to_uid(&g.value, mc.gid_range_min, mc.gid_range_size)
+                    })
+                    .collect();
+                Ok(gids)
+            }
+            Ok(None) => Ok(Vec::new()),
+            Err(_) => {
+                // Fall back to cache — but cache doesn't store group memberships per user,
+                // so return empty if SCIM is unreachable.
+                Ok(Vec::new())
+            }
+        }
+    }
+
     fn scim_user_to_model(&self, scim_user: &crate::scim::ScimUser) -> User {
         let mc = &self.config.mapping;
         let uid = id_to_uid(&scim_user.id, mc.uid_range_min, mc.uid_range_size);

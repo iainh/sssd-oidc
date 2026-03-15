@@ -215,6 +215,47 @@ async fn acct_mgmt_falls_back_to_cache_on_scim_error() {
     assert!(active);
 }
 
+/// initgroups: look up supplementary groups for a user.
+#[tokio::test(flavor = "multi_thread")]
+async fn initgroups_returns_supplementary_gids() {
+    let idp = MockIdp::start().await;
+    let base = idp.base_url();
+    let svc = tokio::task::spawn_blocking({
+        let base = base.clone();
+        move || make_service(&base, &base)
+    })
+    .await
+    .unwrap();
+
+    let gids = tokio::task::spawn_blocking(move || svc.lookup_groups_for_user("alice"))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(!gids.is_empty());
+    assert!(gids.iter().all(|&g| g >= 200_000 && g < 400_000));
+}
+
+/// initgroups returns empty for nonexistent user.
+#[tokio::test(flavor = "multi_thread")]
+async fn initgroups_returns_empty_for_nonexistent_user() {
+    let idp = MockIdp::start().await;
+    let base = idp.base_url();
+    let svc = tokio::task::spawn_blocking({
+        let base = base.clone();
+        move || make_service(&base, &base)
+    })
+    .await
+    .unwrap();
+
+    let gids = tokio::task::spawn_blocking(move || svc.lookup_groups_for_user("nonexistent"))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(gids.is_empty());
+}
+
 /// Enumerate all users via SCIM pagination.
 #[tokio::test(flavor = "multi_thread")]
 async fn enumerate_users_via_scim_pagination() {

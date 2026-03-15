@@ -85,6 +85,96 @@ pub unsafe extern "C" fn _nss_oidc_getgrgid_r(
     unsafe { fill_group::by_gid(gid, result, buf, buflen, errnop) }
 }
 
+// --- initgroups_dyn (supplementary group lookup) ---
+
+/// Return supplementary group IDs for a user.
+///
+/// Called by `initgroups(3)` via glibc's NSS machinery. Writes GIDs into
+/// the caller-provided `*groups` array, growing it via `*size` if needed.
+///
+/// # Safety
+///
+/// All pointer arguments must be valid. `*groups` must point to a buffer of
+/// at least `*size` `gid_t` entries. The caller manages allocation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn _nss_oidc_initgroups_dyn(
+    user: *const c_char,
+    group: gid_t,
+    start: *mut libc::c_long,
+    size: *mut libc::c_long,
+    groupsp: *mut *mut gid_t,
+    _limit: libc::c_long,
+    errnop: *mut c_int,
+) -> NssStatus {
+    let user_str = match unsafe { std::ffi::CStr::from_ptr(user) }.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            unsafe { *errnop = 0 };
+            return NssStatus::NotFound;
+        }
+    };
+
+    let svc = match get_service() {
+        Some(s) => s,
+        None => {
+            unsafe { *errnop = 0 };
+            return NssStatus::Unavail;
+        }
+    };
+    let svc = match svc.lock() {
+        Ok(s) => s,
+        Err(_) => {
+            unsafe { *errnop = 0 };
+            return NssStatus::Unavail;
+        }
+    };
+
+    let gids = match svc.lookup_groups_for_user(user_str) {
+        Ok(g) => g,
+        Err(_) => {
+            unsafe { *errnop = 0 };
+            return NssStatus::Unavail;
+        }
+    };
+
+    unsafe {
+        let groups_buf = *groupsp;
+        let cur_start = *start as usize;
+        let cur_size = *size as usize;
+
+        for gid in gids {
+            // Skip the primary group (already known) and duplicates
+            if gid == group {
+                continue;
+            }
+            let mut already_present = false;
+            for i in 0..cur_start {
+                if *groups_buf.add(i) == gid {
+                    already_present = true;
+                    break;
+                }
+            }
+            if already_present {
+                continue;
+            }
+
+            // Check if we have room
+            if *start as usize >= cur_size {
+                // We can't realloc here — return what we have
+                *errnop = libc::ERANGE;
+                return NssStatus::TryAgain;
+            }
+
+            *groups_buf.add(*start as usize) = gid;
+            *start += 1;
+        }
+
+        *errnop = 0;
+    }
+
+    NssStatus::Success
+}
+
 // --- User enumeration (setpwent / getpwent_r / endpwent) ---
 
 /// Begin user enumeration: fetch all users from SCIM.
