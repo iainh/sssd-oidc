@@ -54,6 +54,8 @@ pub struct ScimMemberRef {
 /// SCIM list response wrapper.
 #[derive(Debug, Deserialize)]
 struct ListResponse<T> {
+    #[serde(rename = "totalResults", default)]
+    total_results: usize,
     #[serde(rename = "Resources")]
     #[serde(default = "Vec::new")]
     resources: Vec<T>,
@@ -124,5 +126,49 @@ impl ScimClient {
         }
         let group: ScimGroup = response.error_for_status()?.json()?;
         Ok(Some(group))
+    }
+
+    /// List all users, paginating via SCIM `startIndex` + `count`.
+    pub fn list_users(&self) -> Result<Vec<ScimUser>, ScimError> {
+        self.paginate_list::<ScimUser>("Users")
+    }
+
+    /// List all groups, paginating via SCIM `startIndex` + `count`.
+    pub fn list_groups(&self) -> Result<Vec<ScimGroup>, ScimError> {
+        self.paginate_list::<ScimGroup>("Groups")
+    }
+
+    /// Generic paginated list for a SCIM resource type.
+    fn paginate_list<T: serde::de::DeserializeOwned>(
+        &self,
+        resource: &str,
+    ) -> Result<Vec<T>, ScimError> {
+        let count = 100;
+        let mut start_index = 1usize;
+        let mut all = Vec::new();
+
+        loop {
+            let url = format!(
+                "{}/{}?startIndex={}&count={}",
+                self.base_url, resource, start_index, count
+            );
+            let resp: ListResponse<T> = self
+                .http
+                .get(&url)
+                .bearer_auth(&self.bearer_token)
+                .send()?
+                .error_for_status()?
+                .json()?;
+
+            let fetched = resp.resources.len();
+            all.extend(resp.resources);
+
+            if all.len() >= resp.total_results || fetched == 0 {
+                break;
+            }
+            start_index += fetched;
+        }
+
+        Ok(all)
     }
 }

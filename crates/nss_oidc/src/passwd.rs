@@ -99,7 +99,7 @@ pub(crate) mod fill_passwd {
     ///
     /// `result`, `buf`, and `errnop` must be valid pointers. `buf` must be at
     /// least `buflen` bytes.
-    unsafe fn fill_passwd_buf(
+    pub(crate) unsafe fn fill_passwd_buf(
         user: &sssd_oidc::model::User,
         result: *mut passwd,
         buf: *mut c_char,

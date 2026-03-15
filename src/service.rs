@@ -75,6 +75,30 @@ impl Service {
         Ok(None)
     }
 
+    /// List all users from SCIM, convert to models, and cache each.
+    pub fn list_all_users(&self) -> Result<Vec<User>, ServiceError> {
+        let scim_users = self.scim.list_users()?;
+        let mut users = Vec::with_capacity(scim_users.len());
+        for su in &scim_users {
+            let user = self.scim_user_to_model(su);
+            self.cache.store_user(&user)?;
+            users.push(user);
+        }
+        Ok(users)
+    }
+
+    /// List all groups from SCIM, convert to models, and cache each.
+    pub fn list_all_groups(&self) -> Result<Vec<Group>, ServiceError> {
+        let scim_groups = self.scim.list_groups()?;
+        let mut groups = Vec::with_capacity(scim_groups.len());
+        for sg in &scim_groups {
+            let group = self.scim_group_to_model(sg);
+            self.cache.store_group(&group)?;
+            groups.push(group);
+        }
+        Ok(groups)
+    }
+
     /// Check if a user is active. Tries SCIM first, falls back to cache.
     /// Cached users are assumed active unless explicitly marked inactive.
     pub fn check_user_active(&self, name: &str) -> Result<bool, ServiceError> {

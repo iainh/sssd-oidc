@@ -214,3 +214,47 @@ async fn acct_mgmt_falls_back_to_cache_on_scim_error() {
 
     assert!(active);
 }
+
+/// Enumerate all users via SCIM pagination.
+#[tokio::test(flavor = "multi_thread")]
+async fn enumerate_users_via_scim_pagination() {
+    let idp = MockIdp::start().await;
+    let base = idp.base_url();
+    let svc = tokio::task::spawn_blocking({
+        let base = base.clone();
+        move || make_service(&base, &base)
+    })
+    .await
+    .unwrap();
+
+    let users = tokio::task::spawn_blocking(move || svc.list_all_users())
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(users.len(), 2);
+    let names: Vec<&str> = users.iter().map(|u| u.name.as_str()).collect();
+    assert!(names.contains(&"alice"));
+    assert!(names.contains(&"disabled_bob"));
+}
+
+/// Enumerate all groups via SCIM pagination.
+#[tokio::test(flavor = "multi_thread")]
+async fn enumerate_groups_via_scim_pagination() {
+    let idp = MockIdp::start().await;
+    let base = idp.base_url();
+    let svc = tokio::task::spawn_blocking({
+        let base = base.clone();
+        move || make_service(&base, &base)
+    })
+    .await
+    .unwrap();
+
+    let groups = tokio::task::spawn_blocking(move || svc.list_all_groups())
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].name, "engineering");
+}

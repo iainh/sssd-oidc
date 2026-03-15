@@ -106,7 +106,7 @@ pub(crate) mod fill_group {
     ///
     /// `result`, `buf`, and `errnop` must be valid pointers. `buf` must be at
     /// least `buflen` bytes.
-    unsafe fn fill_group_buf(
+    pub(crate) unsafe fn fill_group_buf(
         grp: &sssd_oidc::model::Group,
         result: *mut group,
         buf: *mut c_char,

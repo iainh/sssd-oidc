@@ -30,7 +30,8 @@ can resolve a user via `getent passwd <name>` and authenticate via
 | OIDC Device Code (Feature 4) | ✅ Complete | `src/oidc.rs` |
 | PAM authenticate (Feature 5) | ✅ Complete | `crates/pam_oidc/src/ffi.rs`, `pam_conv.rs` |
 | Access control (Feature 6) | ✅ Complete | `src/service.rs`, `crates/pam_oidc/src/ffi.rs` |
-| All existing tests passing | ✅ 29 tests pass | `cargo test --workspace` |
+| NSS Enumeration (Feature 7) | ✅ Complete | `src/scim.rs`, `crates/nss_oidc/src/ffi.rs` |
+| All existing tests passing | ✅ 31 tests pass | `cargo test --workspace` |
 
 ---
 
@@ -489,9 +490,9 @@ async fn setpwent_getpwent_endpwent_cycle() {
 
 ### Done when
 
-- [ ] `getent passwd` in a container lists all SCIM users
-- [ ] Pagination handles `totalResults > count` responses
-- [ ] `endpwent` cleans up enumeration state
+- [x] `getent passwd` in a container lists all SCIM users
+- [x] Pagination handles `totalResults > count` responses
+- [x] `endpwent` cleans up enumeration state
 
 ---
 

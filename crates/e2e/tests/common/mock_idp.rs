@@ -93,6 +93,55 @@ impl MockIdp {
             .mount(&server)
             .await;
 
+        // SCIM: GET /Users?startIndex=1&count=100 (enumeration)
+        Mock::given(method("GET"))
+            .and(path("/Users"))
+            .and(query_param("startIndex", "1"))
+            .and(query_param("count", "100"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+                "totalResults": 2,
+                "startIndex": 1,
+                "itemsPerPage": 100,
+                "Resources": [
+                    {
+                        "id": "user-uuid-alice-001",
+                        "userName": "alice",
+                        "displayName": "Alice Smith",
+                        "active": true,
+                        "groups": [{"value": "group-uuid-eng-001", "display": "engineering"}]
+                    },
+                    {
+                        "id": "user-uuid-bob-002",
+                        "userName": "disabled_bob",
+                        "displayName": "Bob Disabled",
+                        "active": false,
+                        "groups": []
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        // SCIM: GET /Groups?startIndex=1&count=100 (enumeration)
+        Mock::given(method("GET"))
+            .and(path("/Groups"))
+            .and(query_param("startIndex", "1"))
+            .and(query_param("count", "100"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+                "totalResults": 1,
+                "startIndex": 1,
+                "itemsPerPage": 100,
+                "Resources": [{
+                    "id": "group-uuid-eng-001",
+                    "displayName": "engineering",
+                    "members": [{"value": "user-uuid-alice-001", "display": "alice"}]
+                }]
+            })))
+            .mount(&server)
+            .await;
+
         // OIDC: GET /.well-known/openid-configuration
         let issuer = server.uri();
         Mock::given(method("GET"))
