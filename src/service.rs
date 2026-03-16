@@ -23,6 +23,9 @@ impl From<IdRangeExhausted> for ServiceError {
     }
 }
 
+/// Maximum length for user/group name lookups (matches `LOGIN_NAME_MAX`).
+const MAX_NAME_LEN: usize = 256;
+
 /// Façade used by NSS and PAM modules to resolve users and groups.
 pub struct Service {
     scim: ScimClient,
@@ -45,6 +48,10 @@ impl Service {
 
     /// Look up a user by login name. Tries SCIM first, falls back to cache.
     pub fn lookup_user_by_name(&self, name: &str) -> Result<Option<User>, ServiceError> {
+        if name.len() > MAX_NAME_LEN {
+            debug!(name_len = name.len(), "rejecting oversized user name");
+            return Ok(None);
+        }
         debug!(name, "looking up user by name");
         match self.scim.get_user_by_name(name) {
             Ok(Some(scim_user)) => {
@@ -78,6 +85,10 @@ impl Service {
 
     /// Look up a group by name.
     pub fn lookup_group_by_name(&self, name: &str) -> Result<Option<Group>, ServiceError> {
+        if name.len() > MAX_NAME_LEN {
+            debug!(name_len = name.len(), "rejecting oversized group name");
+            return Ok(None);
+        }
         debug!(name, "looking up group by name");
         match self.scim.get_group_by_name(name) {
             Ok(Some(scim_group)) => {
@@ -131,6 +142,9 @@ impl Service {
     /// Check if a user is active. Tries SCIM first, falls back to cache.
     /// Cached users are assumed active unless explicitly marked inactive.
     pub fn check_user_active(&self, name: &str) -> Result<bool, ServiceError> {
+        if name.len() > MAX_NAME_LEN {
+            return Ok(false);
+        }
         match self.scim.get_user_by_name(name) {
             Ok(Some(scim_user)) => {
                 let user = self.scim_user_to_model(&scim_user)?;
@@ -157,6 +171,9 @@ impl Service {
     /// Look up all groups a user belongs to by login name.
     /// Returns the GIDs from the user's SCIM `groups` attribute.
     pub fn lookup_groups_for_user(&self, name: &str) -> Result<Vec<u32>, ServiceError> {
+        if name.len() > MAX_NAME_LEN {
+            return Ok(Vec::new());
+        }
         let mc = &self.config.mapping;
         match self.scim.get_user_by_name(name) {
             Ok(Some(scim_user)) => {

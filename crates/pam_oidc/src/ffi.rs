@@ -95,7 +95,10 @@ fn authenticate_impl(pamh: *mut PamHandle) -> c_int {
                 Some(m) => m,
                 None => return PAM_AUTH_ERR,
             };
-            let svc = svc_mutex.lock().unwrap_or_else(|e| e.into_inner());
+            let svc = svc_mutex.lock().unwrap_or_else(|e| {
+                warn!("service mutex was poisoned — recovering");
+                e.into_inner()
+            });
 
             match svc.lookup_user_by_name(&username) {
                 Ok(Some(user)) if user.external_id == *sub => {
@@ -221,7 +224,10 @@ fn acct_mgmt_impl(pamh: *mut PamHandle) -> c_int {
         Some(m) => m,
         None => return PAM_AUTHINFO_UNAVAIL,
     };
-    let svc = svc_mutex.lock().unwrap_or_else(|e| e.into_inner());
+    let svc = svc_mutex.lock().unwrap_or_else(|e| {
+        warn!("service mutex was poisoned — recovering");
+        e.into_inner()
+    });
 
     match svc.check_user_active(&username) {
         Ok(true) => {

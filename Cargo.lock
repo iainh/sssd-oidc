@@ -1392,6 +1392,7 @@ dependencies = [
  "jsonwebtoken",
  "libc",
  "murmur3",
+ "percent-encoding",
  "reqwest",
  "rusqlite",
  "serde",

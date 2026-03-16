@@ -45,6 +45,7 @@ impl Cache {
         if path != ":memory:" {
             Self::harden_cache_file(Path::new(path))?;
         }
+        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS uid_cache (

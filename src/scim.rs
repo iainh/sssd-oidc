@@ -1,6 +1,27 @@
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde::Deserialize;
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, warn};
+
+/// Characters that must be percent-encoded when used in a URL path segment.
+/// Covers CONTROLS plus the RFC 3986 reserved sub-delimiters and gen-delimiters
+/// that are not valid unencoded in a single path segment.
+const PATH_SEGMENT_ENCODE: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'/')
+    .add(b'?')
+    .add(b'[')
+    .add(b']')
+    .add(b'<')
+    .add(b'>')
+    .add(b'^')
+    .add(b'`')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}');
 
 #[derive(Debug, Error)]
 pub enum ScimError {
@@ -140,7 +161,8 @@ impl ScimClient {
     /// Look up a user by SCIM `id`.
     pub fn get_user_by_id(&self, id: &str) -> Result<Option<ScimUser>, ScimError> {
         debug!(id, "SCIM user lookup by id");
-        let url = format!("{}/Users/{}", self.base_url, id);
+        let encoded_id = utf8_percent_encode(id, PATH_SEGMENT_ENCODE);
+        let url = format!("{}/Users/{}", self.base_url, encoded_id);
         let response = self.http.get(&url).bearer_auth(&self.bearer_token).send()?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
@@ -170,7 +192,8 @@ impl ScimClient {
     /// Look up a group by SCIM `id`.
     pub fn get_group_by_id(&self, id: &str) -> Result<Option<ScimGroup>, ScimError> {
         debug!(id, "SCIM group lookup by id");
-        let url = format!("{}/Groups/{}", self.base_url, id);
+        let encoded_id = utf8_percent_encode(id, PATH_SEGMENT_ENCODE);
+        let url = format!("{}/Groups/{}", self.base_url, encoded_id);
         let response = self.http.get(&url).bearer_auth(&self.bearer_token).send()?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
@@ -208,15 +231,20 @@ impl ScimClient {
     }
 
     /// Generic paginated list for a SCIM resource type.
+    ///
+    /// Limits total pages to `MAX_PAGINATION_PAGES` to guard against servers
+    /// that return inconsistent `totalResults` or ignore `startIndex`.
     fn paginate_list<T: serde::de::DeserializeOwned>(
         &self,
         resource: &str,
     ) -> Result<Vec<T>, ScimError> {
+        const MAX_PAGINATION_PAGES: usize = 1_000;
         let count = 100;
         let mut start_index = 1usize;
         let mut all = Vec::new();
+        let mut complete = false;
 
-        loop {
+        for _page in 0..MAX_PAGINATION_PAGES {
             let url = format!(
                 "{}/{}?startIndex={}&count={}",
                 self.base_url, resource, start_index, count
@@ -233,9 +261,19 @@ impl ScimClient {
             all.extend(resp.resources);
 
             if all.len() >= resp.total_results || fetched == 0 {
+                complete = true;
                 break;
             }
             start_index += fetched;
+        }
+
+        if !complete {
+            warn!(
+                count = all.len(),
+                resource,
+                max_pages = MAX_PAGINATION_PAGES,
+                "SCIM pagination hit page limit — results may be incomplete"
+            );
         }
 
         debug!(count = all.len(), resource, "SCIM pagination complete");
