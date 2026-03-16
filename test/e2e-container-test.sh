@@ -21,6 +21,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Ensure SSH test key has correct permissions (git doesn't preserve 0600)
+chmod 600 "$SCRIPT_DIR/ssh_test_key"
+
 echo "=== Building and starting containers ==="
 $COMPOSE up -d --build
 
@@ -250,12 +253,13 @@ test_ssh_login_alice() {
     local key="$SCRIPT_DIR/ssh_test_key"
     local result
 
-    # Wait for sshd to be ready (up to 15s)
+    # Wait for sshd to be ready (up to 30s)
     local i=0
     while ! ssh $ssh_opts -i "$key" -p 2222 alice@localhost "true" 2>/dev/null; do
         i=$((i + 1))
-        if [ "$i" -ge 15 ]; then
+        if [ "$i" -ge 30 ]; then
             echo "  sshd did not become reachable in time"
+            ssh $ssh_opts -i "$key" -p 2222 alice@localhost "true" 2>&1 || true
             return 1
         fi
         sleep 1
