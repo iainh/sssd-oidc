@@ -94,8 +94,8 @@ async fn nss_getpwnam_r_fills_passwd_struct() {
     assert_eq!(errnop, 0);
     assert_eq!(pw.name, "alice");
     assert_eq!(pw.passwd, "x");
-    assert!(pw.uid >= 200_000 && pw.uid < 400_000);
-    assert!(pw.gid >= 200_000 && pw.gid < 400_000);
+    assert!((200_000..400_000).contains(&pw.uid));
+    assert!((200_000..400_000).contains(&pw.gid));
     assert_eq!(pw.gecos, "Alice Smith");
     assert_eq!(pw.dir, "/home/alice");
     assert_eq!(pw.shell, "/bin/bash");
@@ -178,7 +178,7 @@ async fn nss_getpwuid_r_after_name_lookup() {
     .unwrap();
 
     assert_eq!(name, "alice");
-    assert!(uid >= 200_000 && uid < 400_000);
+    assert!((200_000..400_000).contains(&uid));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -246,7 +246,7 @@ async fn nss_initgroups_dyn_returns_supplementary_gids() {
     .unwrap();
 
     assert!(!gids.is_empty());
-    assert!(gids.iter().all(|&g| g >= 200_000 && g < 400_000));
+    assert!(gids.iter().all(|&g| (200_000..400_000).contains(&g)));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -351,7 +351,7 @@ async fn nss_getgrnam_r_fills_group_struct() {
     assert_eq!(errnop, 0);
     assert_eq!(grp.name, "engineering");
     assert_eq!(grp.passwd, "x");
-    assert!(grp.gid >= 200_000 && grp.gid < 400_000);
+    assert!((200_000..400_000).contains(&grp.gid));
     assert!(grp.members.contains(&"alice".to_string()));
 }
 
@@ -432,5 +432,5 @@ async fn nss_getgrgid_r_after_name_lookup() {
     .unwrap();
 
     assert_eq!(name, "engineering");
-    assert!(gid >= 200_000 && gid < 400_000);
+    assert!((200_000..400_000).contains(&gid));
 }

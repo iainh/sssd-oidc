@@ -97,31 +97,6 @@ fn escape_filter_value(value: &str) -> String {
     escaped
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn escape_filter_value_handles_plain_string() {
-        assert_eq!(escape_filter_value("alice"), "alice");
-    }
-
-    #[test]
-    fn escape_filter_value_escapes_quotes() {
-        assert_eq!(escape_filter_value(r#"al"ice"#), r#"al\"ice"#);
-    }
-
-    #[test]
-    fn escape_filter_value_escapes_backslashes() {
-        assert_eq!(escape_filter_value(r"al\ice"), r"al\\ice");
-    }
-
-    #[test]
-    fn escape_filter_value_escapes_both() {
-        assert_eq!(escape_filter_value(r#"a\"b"#), r#"a\\\"b"#);
-    }
-}
-
 /// SCIM 2.0 client using `reqwest::blocking`.
 pub struct ScimClient {
     http: reqwest::blocking::Client,
@@ -278,5 +253,30 @@ impl ScimClient {
 
         debug!(count = all.len(), resource, "SCIM pagination complete");
         Ok(all)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escape_filter_value_handles_plain_string() {
+        assert_eq!(escape_filter_value("alice"), "alice");
+    }
+
+    #[test]
+    fn escape_filter_value_escapes_quotes() {
+        assert_eq!(escape_filter_value(r#"al"ice"#), r#"al\"ice"#);
+    }
+
+    #[test]
+    fn escape_filter_value_escapes_backslashes() {
+        assert_eq!(escape_filter_value(r"al\ice"), r"al\\ice");
+    }
+
+    #[test]
+    fn escape_filter_value_escapes_both() {
+        assert_eq!(escape_filter_value(r#"a\"b"#), r#"a\\\"b"#);
     }
 }

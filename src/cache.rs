@@ -567,7 +567,7 @@ mod tests {
         // user-bbb should get a different UID (probed)
         let uid_bbb = cache.resolve_uid("user-bbb", 200_000, 200_000).unwrap();
         assert_ne!(uid_bbb, natural_bbb);
-        assert!(uid_bbb >= 200_000 && uid_bbb < 400_000);
+        assert!((200_000..400_000).contains(&uid_bbb));
     }
 
     #[test]
@@ -599,7 +599,7 @@ mod tests {
 
         let gid_b = cache.resolve_gid("group-b", 300_000, 100).unwrap();
         assert_ne!(gid_b, natural_b);
-        assert!(gid_b >= 300_000 && gid_b < 300_100);
+        assert!((300_000..300_100).contains(&gid_b));
     }
 
     #[test]

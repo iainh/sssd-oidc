@@ -98,9 +98,7 @@ mod tests {
 
         // Force a collision by pre-occupying user-b's natural slot
         let natural_b = id_to_uid("user-b", 100, 10);
-        if !taken.contains_key(&natural_b) {
-            taken.insert(natural_b, "blocker".into());
-        }
+        taken.entry(natural_b).or_insert_with(|| "blocker".into());
 
         let uid_b: Result<u32, IdRangeExhausted> = resolve_id(
             "user-b",
@@ -115,7 +113,7 @@ mod tests {
         );
         let uid_b = uid_b.unwrap();
         assert_ne!(uid_b, natural_b);
-        assert!(uid_b >= 100 && uid_b < 110);
+        assert!((100..110).contains(&uid_b));
     }
 
     #[test]

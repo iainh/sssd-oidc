@@ -182,6 +182,10 @@ pub unsafe extern "C" fn _nss_oidc_initgroups_dyn(
 // --- User enumeration (setpwent / getpwent_r / endpwent) ---
 
 /// Begin user enumeration: fetch all users from SCIM.
+///
+/// # Safety
+///
+/// Called by glibc's NSS dispatcher. No pointer arguments.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_oidc_setpwent() -> NssStatus {
     trace!("setpwent");
@@ -246,6 +250,10 @@ pub unsafe extern "C" fn _nss_oidc_getpwent_r(
 }
 
 /// End user enumeration: free the state.
+///
+/// # Safety
+///
+/// Called by glibc's NSS dispatcher. No pointer arguments.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_oidc_endpwent() -> NssStatus {
     if let Ok(mut state) = USER_ENUM.lock() {
@@ -257,6 +265,10 @@ pub unsafe extern "C" fn _nss_oidc_endpwent() -> NssStatus {
 // --- Group enumeration (setgrent / getgrent_r / endgrent) ---
 
 /// Begin group enumeration: fetch all groups from SCIM.
+///
+/// # Safety
+///
+/// Called by glibc's NSS dispatcher. No pointer arguments.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_oidc_setgrent() -> NssStatus {
     trace!("setgrent");
@@ -321,6 +333,10 @@ pub unsafe extern "C" fn _nss_oidc_getgrent_r(
 }
 
 /// End group enumeration: free the state.
+///
+/// # Safety
+///
+/// Called by glibc's NSS dispatcher. No pointer arguments.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_oidc_endgrent() -> NssStatus {
     if let Ok(mut state) = GROUP_ENUM.lock() {

@@ -39,8 +39,8 @@ async fn lookup_user_by_name_via_scim() {
     assert_eq!(user.gecos, "Alice Smith");
     assert_eq!(user.home, "/home/alice");
     assert_eq!(user.shell, "/bin/bash");
-    assert!(user.uid >= 200_000 && user.uid < 400_000);
-    assert!(user.gid >= 200_000 && user.gid < 400_000);
+    assert!((200_000..400_000).contains(&user.uid));
+    assert!((200_000..400_000).contains(&user.gid));
 }
 
 /// Verify that looking up a nonexistent user returns None.
@@ -81,7 +81,7 @@ async fn lookup_group_by_name_via_scim() {
         .expect("engineering group should be found");
 
     assert_eq!(group.name, "engineering");
-    assert!(group.gid >= 200_000 && group.gid < 400_000);
+    assert!((200_000..400_000).contains(&group.gid));
     assert_eq!(group.members, vec!["alice"]);
 }
 
@@ -116,7 +116,7 @@ async fn uid_reverse_lookup_after_cache() {
     .unwrap();
 
     assert_eq!(user_name, "alice");
-    assert!(user_uid >= 200_000 && user_uid < 400_000);
+    assert!((200_000..400_000).contains(&user_uid));
 }
 
 /// Verify deterministic mapping: same external_id always produces the same UID.
@@ -127,7 +127,7 @@ fn deterministic_uid_mapping() {
     let uid1 = id_to_uid("user-uuid-alice-001", 200_000, 200_000);
     let uid2 = id_to_uid("user-uuid-alice-001", 200_000, 200_000);
     assert_eq!(uid1, uid2);
-    assert!(uid1 >= 200_000 && uid1 < 400_000);
+    assert!((200_000..400_000).contains(&uid1));
 }
 
 /// Active user passes check_user_active.
@@ -273,7 +273,7 @@ async fn initgroups_returns_supplementary_gids() {
         .unwrap();
 
     assert!(!gids.is_empty());
-    assert!(gids.iter().all(|&g| g >= 200_000 && g < 400_000));
+    assert!(gids.iter().all(|&g| (200_000..400_000).contains(&g)));
 }
 
 /// initgroups returns empty for nonexistent user.
