@@ -218,14 +218,17 @@ fn check_secret_file_permissions(path: &Path) -> Result<(), ConfigError> {
     }
 
     #[cfg(target_os = "linux")]
-    if !cfg!(test) && meta.uid() != 0 {
-        return Err(ConfigError::InsecurePermissions {
-            path: path.to_owned(),
-            detail: format!(
-                "owned by uid {} but must be owned by root (uid 0)",
-                meta.uid()
-            ),
-        });
+    {
+        let running_as_root = unsafe { libc::geteuid() } == 0;
+        if running_as_root && meta.uid() != 0 {
+            return Err(ConfigError::InsecurePermissions {
+                path: path.to_owned(),
+                detail: format!(
+                    "owned by uid {} but must be owned by root (uid 0)",
+                    meta.uid()
+                ),
+            });
+        }
     }
 
     Ok(())
