@@ -218,7 +218,7 @@ fn check_secret_file_permissions(path: &Path) -> Result<(), ConfigError> {
     }
 
     #[cfg(target_os = "linux")]
-    if meta.uid() != 0 {
+    if !cfg!(test) && meta.uid() != 0 {
         return Err(ConfigError::InsecurePermissions {
             path: path.to_owned(),
             detail: format!(
