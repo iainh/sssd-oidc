@@ -1,0 +1,94 @@
+# sssd-oidc example configuration
+# =================================
+# Install to: /etc/sssd-oidc/config.toml
+# Override path via the SSSD_OIDC_CONFIG environment variable.
+#
+# Only the [scim] and [oidc] sections are required; all other sections
+# have sensible defaults and may be omitted.
+
+# ---------------------------------------------------------------------------
+# SCIM 2.0 identity provider connection (RFC 7644)
+# ---------------------------------------------------------------------------
+[scim]
+
+# Base URL for the SCIM 2.0 endpoint.
+# Must include the version path segment (typically /scim/v2).
+base_url = "https://example.okta.com/scim/v2"
+
+# Path to a file containing the SCIM bearer token.
+# The file MUST be:
+#   - a regular file (not a symlink)
+#   - mode 0600 or 0400 (no group/other access)
+#   - owned by root (on Linux)
+# Default: /etc/sssd-oidc/scim-token
+bearer_token_file = "/etc/sssd-oidc/scim-token"
+
+# ---------------------------------------------------------------------------
+# OpenID Connect / OAuth 2.0 (used for PAM authentication)
+# ---------------------------------------------------------------------------
+[oidc]
+
+# OIDC issuer URL. The module appends /.well-known/openid-configuration
+# automatically for discovery.
+issuer_url = "https://example.okta.com"
+
+# OAuth 2.0 client ID registered with your identity provider.
+client_id = "0oa1b2c3d4e5f6g7h8i9"
+
+# OAuth 2.0 client secret (optional). Required only if your IdP
+# configuration mandates a confidential client for the device code flow.
+# client_secret = "s3cr3t"
+
+# ---------------------------------------------------------------------------
+# UID/GID mapping
+# ---------------------------------------------------------------------------
+# External UUIDs are mapped to local UIDs/GIDs deterministically using
+# murmur3 (seed 0) hashed into the configured range:
+#   local_id = range_min + (hash(uuid) % range_size)
+#
+# Choose a range that does not overlap with local accounts (typically
+# < 65535) or other NSS providers (LDAP, AD, etc.).
+# ---------------------------------------------------------------------------
+[mapping]
+
+# Start of the UID range for mapped users. Default: 200000
+uid_range_min = 200000
+
+# Size of the UID range. Default: 200000  (i.e. UIDs 200000–399999)
+uid_range_size = 200000
+
+# Start of the GID range for mapped groups. Default: 200000
+gid_range_min = 200000
+
+# Size of the GID range. Default: 200000
+gid_range_size = 200000
+
+# ---------------------------------------------------------------------------
+# User account defaults
+# ---------------------------------------------------------------------------
+[user_defaults]
+
+# Default login shell for OIDC-provisioned users. Default: /bin/bash
+shell = "/bin/bash"
+
+# Home directory template. {user} is replaced with the SCIM userName.
+# The directory is NOT created automatically — use pam_mkhomedir or
+# systemd-homed for that. Default: /home/{user}
+home_template = "/home/{user}"
+
+# ---------------------------------------------------------------------------
+# Local cache (SQLite)
+# ---------------------------------------------------------------------------
+# A local SQLite database caches UID↔UUID reverse lookups and allows
+# offline fallback when the SCIM endpoint is unreachable.
+# ---------------------------------------------------------------------------
+[cache]
+
+# Path to the SQLite database file. Created automatically on first use.
+# Default: /var/lib/sssd-oidc/cache.db
+db_path = "/var/lib/sssd-oidc/cache.db"
+
+# Time-to-live for cache entries in seconds. After this period, entries
+# are re-validated against the SCIM endpoint on next lookup.
+# Default: 3600 (1 hour)
+ttl_seconds = 3600
