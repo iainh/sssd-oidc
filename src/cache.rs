@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use rusqlite::Connection;
 use thiserror::Error;
 use tracing::{debug, info, trace};
@@ -11,6 +13,8 @@ pub enum CacheError {
     Sqlite(#[from] rusqlite::Error),
     #[error("UID/GID range exhausted — all slots occupied")]
     RangeExhausted,
+    #[error("insecure permissions on cache {path}: {detail}")]
+    InsecurePermissions { path: String, detail: String },
 }
 
 impl From<IdRangeExhausted> for CacheError {
@@ -28,9 +32,19 @@ pub struct Cache {
 
 impl Cache {
     /// Open (or create) the cache database at the given path.
+    ///
+    /// On Unix, after opening the file the permissions are tightened to `0600`.
+    /// If the file is not owned by root (on Linux) or has group/other bits set
+    /// and cannot be corrected, the open is refused with
+    /// [`CacheError::InsecurePermissions`].
     pub fn open(path: &str, ttl_seconds: u64) -> Result<Self, CacheError> {
         info!(path, ttl_seconds, "opening cache database");
         let conn = Connection::open(path)?;
+
+        // The `:memory:` path is used in tests — skip permission checks.
+        if path != ":memory:" {
+            Self::harden_cache_file(Path::new(path))?;
+        }
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS uid_cache (
@@ -62,6 +76,68 @@ impl Cache {
             ",
         )?;
         Ok(Self { conn, ttl_seconds })
+    }
+
+    /// Enforce restrictive ownership and permissions on the cache file.
+    ///
+    /// Sets mode `0600` on the file. On Linux, also requires root ownership.
+    /// Follows the same hardening pattern as `check_secret_file_permissions`
+    /// in `config.rs`.
+    #[cfg(unix)]
+    fn harden_cache_file(path: &Path) -> Result<(), CacheError> {
+        use std::fs;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let meta = fs::symlink_metadata(path).map_err(|e| CacheError::InsecurePermissions {
+            path: path.display().to_string(),
+            detail: format!("cannot stat file: {e}"),
+        })?;
+
+        if !meta.is_file() {
+            return Err(CacheError::InsecurePermissions {
+                path: path.display().to_string(),
+                detail: "not a regular file".into(),
+            });
+        }
+
+        // On Linux, refuse to use a cache file not owned by root.
+        #[cfg(target_os = "linux")]
+        if meta.uid() != 0 {
+            return Err(CacheError::InsecurePermissions {
+                path: path.display().to_string(),
+                detail: format!(
+                    "owned by uid {} but must be owned by root (uid 0)",
+                    meta.uid()
+                ),
+            });
+        }
+
+        let mode = meta.mode() & 0o777;
+        if mode != 0o600 {
+            info!(
+                path = %path.display(),
+                current_mode = format!("{mode:04o}"),
+                "tightening cache file permissions to 0600"
+            );
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| {
+                CacheError::InsecurePermissions {
+                    path: path.display().to_string(),
+                    detail: format!(
+                        "permissions {:04o} are too open and could not be corrected: {e}. \
+                         Run: chmod 600 {}",
+                        mode,
+                        path.display()
+                    ),
+                }
+            })?;
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn harden_cache_file(_path: &Path) -> Result<(), CacheError> {
+        Ok(())
     }
 
     /// Open an in-memory cache (useful for tests).
