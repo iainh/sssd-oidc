@@ -302,6 +302,40 @@ impl Cache {
         Ok(())
     }
 
+    /// Return all cached groups that contain `member_name` (respects TTL).
+    ///
+    /// Used for offline `initgroups` fallback: given a login name, find every
+    /// group whose `group_members` row lists that name, then return their GIDs.
+    pub fn get_groups_for_member(&self, member_name: &str) -> Result<Vec<Group>, CacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT g.external_id, g.name, g.gid
+             FROM gid_cache g
+             JOIN group_members gm ON gm.group_external_id = g.external_id
+             WHERE gm.member_name = ?1
+               AND g.cached_at > strftime('%s', 'now') - ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![member_name, self.ttl_seconds], |row| {
+            Ok(Group {
+                external_id: row.get(0)?,
+                name: row.get(1)?,
+                gid: row.get(2)?,
+                members: Vec::new(),
+            })
+        })?;
+        let mut groups = Vec::new();
+        for row in rows {
+            let mut group = row?;
+            group.members = self.get_group_members(&group.external_id)?;
+            groups.push(group);
+        }
+        trace!(
+            member_name,
+            count = groups.len(),
+            "cache lookup groups for member"
+        );
+        Ok(groups)
+    }
+
     /// Load group members from the cache.
     fn get_group_members(&self, external_id: &str) -> Result<Vec<String>, CacheError> {
         let mut stmt = self
@@ -489,6 +523,45 @@ mod tests {
         let gid_b = cache.resolve_gid("group-b", 300_000, 100).unwrap();
         assert_ne!(gid_b, natural_b);
         assert!(gid_b >= 300_000 && gid_b < 300_100);
+    }
+
+    #[test]
+    fn get_groups_for_member_returns_matching_groups() {
+        let cache = Cache::open_in_memory().unwrap();
+        let eng = Group {
+            external_id: "grp-eng".into(),
+            name: "engineering".into(),
+            gid: 200_010,
+            members: vec!["alice".into(), "bob".into()],
+        };
+        let ops = Group {
+            external_id: "grp-ops".into(),
+            name: "operations".into(),
+            gid: 200_020,
+            members: vec!["alice".into(), "carol".into()],
+        };
+        let design = Group {
+            external_id: "grp-des".into(),
+            name: "design".into(),
+            gid: 200_030,
+            members: vec!["carol".into()],
+        };
+        cache.store_group(&eng).unwrap();
+        cache.store_group(&ops).unwrap();
+        cache.store_group(&design).unwrap();
+
+        let alice_groups = cache.get_groups_for_member("alice").unwrap();
+        let mut alice_gids: Vec<u32> = alice_groups.iter().map(|g| g.gid).collect();
+        alice_gids.sort();
+        assert_eq!(alice_gids, vec![200_010, 200_020]);
+
+        let carol_groups = cache.get_groups_for_member("carol").unwrap();
+        let mut carol_gids: Vec<u32> = carol_groups.iter().map(|g| g.gid).collect();
+        carol_gids.sort();
+        assert_eq!(carol_gids, vec![200_020, 200_030]);
+
+        let nobody = cache.get_groups_for_member("nobody").unwrap();
+        assert!(nobody.is_empty());
     }
 
     #[test]

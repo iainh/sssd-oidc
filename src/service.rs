@@ -175,7 +175,8 @@ impl Service {
             Ok(None) => Ok(Vec::new()),
             Err(e) => {
                 warn!(name, error = %e, "SCIM group membership lookup failed, falling back to cache");
-                Ok(Vec::new())
+                let cached = self.cache.get_groups_for_member(name)?;
+                Ok(cached.into_iter().map(|g| g.gid).collect())
             }
         }
     }
