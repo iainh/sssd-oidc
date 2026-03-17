@@ -12,14 +12,14 @@ env:
 
 jobs:
   build-rpm:
-    name: Build RPM on RHEL 9
+    name: Build RPM on CentOS Stream 9
     runs-on: ubuntu-latest
     container:
-      image: registry.access.redhat.com/ubi9/ubi:latest
+      image: quay.io/centos/centos:stream9
     steps:
       - name: Install system dependencies
         run: |
-          dnf install -y \
+          dnf install -y --enablerepo=crb \
             gcc make pam-devel rpm-build rpmdevtools \
             perl-interpreter tar gzip findutils \
             git
