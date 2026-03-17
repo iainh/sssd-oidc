@@ -162,29 +162,6 @@ IdP sidecar, and runs 22 tests covering:
 
 Requires Docker (with Compose) or Podman (with podman-compose).
 
-## Implementation status
-
-| Component | Status |
-|---|---|
-| Config loading (TOML) | ✅ Complete |
-| SCIM 2.0 client (user/group lookup) | ✅ Complete |
-| UID/GID deterministic mapping | ✅ Complete |
-| SQLite cache (store/reverse lookup) | ✅ Complete |
-| Service façade (SCIM → model + cache) | ✅ Complete |
-| NSS passwd FFI (`getpwnam_r`, `getpwuid_r`) | ✅ Complete |
-| NSS group FFI (`getgrnam_r`, `getgrgid_r`) | ✅ Complete |
-| NSS enumeration (`setpwent`/`getpwent`/`setgrent`/`getgrent`) | ✅ Complete |
-| NSS initgroups (`initgroups_dyn`) | ✅ Complete |
-| OIDC discovery | ✅ Complete |
-| OIDC device code authentication (RFC 8628) | ✅ Complete |
-| PAM authenticate (`pam_sm_authenticate`) | ✅ Complete |
-| PAM account management (`pam_sm_acct_mgmt`) | ✅ Complete |
-| PAM password change (`pam_sm_chauthtok`) | ✅ Complete (redirects to IdP) |
-| Offline cache fallback | ✅ Complete |
-| Mock IdP (standalone binary) | ✅ Complete |
-| Container build (Containerfile) | ✅ Complete |
-| E2E container test suite | ✅ Complete (22 tests incl. SSH login) |
-
 ## Research
 
 See [`docs/research/`](docs/research/) for the feasibility study and
