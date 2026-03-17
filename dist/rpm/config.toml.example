@@ -1,0 +1,25 @@
+# sssd-oidc configuration
+# See https://github.com/iainh/sssd-oidc for documentation.
+
+[scim]
+base_url = "https://example.okta.com/scim/v2"
+# Path to file containing the SCIM bearer token (default shown)
+# bearer_token_file = "/etc/sssd-oidc/scim-token"
+
+[oidc]
+issuer_url = "https://example.okta.com"
+client_id = "your-client-id"
+# client_secret = "your-client-secret"
+
+[mapping]
+uid_range_min = 200000
+uid_range_size = 200000
+gid_range_min = 200000
+gid_range_size = 200000
+
+[user_defaults]
+shell = "/bin/bash"
+home_template = "/home/{user}"
+
+[cache]
+db_path = "/var/lib/sssd-oidc/cache.db"
