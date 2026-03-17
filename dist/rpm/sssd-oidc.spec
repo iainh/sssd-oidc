@@ -9,6 +9,9 @@ License:        GPL-2.0-or-later
 URL:            https://github.com/iainh/sssd-oidc
 Source0:        %{crate}-%{version}.tar.gz
 
+# Rust release builds don't produce rpmbuild-compatible debuginfo
+%global debug_package %{nil}
+
 # Build requirements (rust/cargo installed via rustup, not RPM)
 BuildRequires:  gcc
 BuildRequires:  pam-devel
