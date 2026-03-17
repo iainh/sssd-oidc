@@ -9,17 +9,25 @@ work.
 
 ## Architecture
 
-```
-SSSD (proxy mode)
- ├─ id_provider = proxy  →  libnss_oidc.so  (NSS module, Rust/FFI)
- └─ auth_provider = proxy → pam_oidc.so     (PAM module, Rust/FFI)
-                    │
-                    ▼
-          sssd-oidc (shared library)
-           ├─ SCIM 2.0 client  (identity lookups)
-           ├─ OIDC device code  (authentication)
-           ├─ UID/GID mapping   (murmur3 hash)
-           └─ SQLite cache      (reverse lookups)
+```mermaid
+flowchart TD
+    SSSD["SSSD (proxy mode)"]
+    NSS["libnss_oidc.so\n(NSS module, Rust/FFI)"]
+    PAM["pam_oidc.so\n(PAM module, Rust/FFI)"]
+    LIB["sssd-oidc (shared library)"]
+    SCIM["SCIM 2.0 client\n(identity lookups)"]
+    OIDC["OIDC device code\n(authentication)"]
+    MAP["UID/GID mapping\n(murmur3 hash)"]
+    CACHE["SQLite cache\n(reverse lookups)"]
+
+    SSSD -- "id_provider = proxy" --> NSS
+    SSSD -- "auth_provider = proxy" --> PAM
+    NSS --> LIB
+    PAM --> LIB
+    LIB --> SCIM
+    LIB --> OIDC
+    LIB --> MAP
+    LIB --> CACHE
 ```
 
 ### Workspace crates
