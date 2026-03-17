@@ -26,7 +26,9 @@ const PATH_SEGMENT_ENCODE: &AsciiSet = &CONTROLS
 #[derive(Debug, Error)]
 pub enum ScimError {
     #[error("HTTP request failed: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(#[from] ureq::Error),
+    #[error("JSON deserialization failed: {0}")]
+    Json(#[from] std::io::Error),
     #[error("user not found: {0}")]
     UserNotFound(String),
     #[error("group not found: {0}")]
@@ -97,20 +99,20 @@ fn escape_filter_value(value: &str) -> String {
     escaped
 }
 
-/// SCIM 2.0 client using `reqwest::blocking`.
+/// SCIM 2.0 client using `ureq`.
 pub struct ScimClient {
-    http: reqwest::blocking::Client,
+    http: ureq::Agent,
     base_url: String,
     bearer_token: String,
 }
 
 impl ScimClient {
     pub fn new(base_url: &str, bearer_token: &str) -> Self {
-        let http = reqwest::blocking::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .expect("failed to build HTTP client");
+        let config = ureq::Agent::config_builder()
+            .timeout_connect(Some(std::time::Duration::from_secs(5)))
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .build();
+        let http: ureq::Agent = config.into();
         Self {
             http,
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -118,18 +120,24 @@ impl ScimClient {
         }
     }
 
+    fn auth_header_value(&self) -> String {
+        format!("Bearer {}", self.bearer_token)
+    }
+
     /// Look up a user by `userName`.
     pub fn get_user_by_name(&self, name: &str) -> Result<Option<ScimUser>, ScimError> {
         debug!(name, "SCIM user lookup by name");
         let escaped = escape_filter_value(name);
-        let url = format!("{}/Users?filter=userName eq \"{}\"", self.base_url, escaped);
+        let filter = format!("userName eq \"{escaped}\"");
+        let url = format!("{}/Users", self.base_url);
         let resp: ListResponse<ScimUser> = self
             .http
             .get(&url)
-            .bearer_auth(&self.bearer_token)
-            .send()?
-            .error_for_status()?
-            .json()?;
+            .query_pairs([("filter", &filter)])
+            .header("Authorization", &self.auth_header_value())
+            .call()?
+            .body_mut()
+            .read_json()?;
         Ok(resp.resources.into_iter().next())
     }
 
@@ -138,29 +146,35 @@ impl ScimClient {
         debug!(id, "SCIM user lookup by id");
         let encoded_id = utf8_percent_encode(id, PATH_SEGMENT_ENCODE);
         let url = format!("{}/Users/{}", self.base_url, encoded_id);
-        let response = self.http.get(&url).bearer_auth(&self.bearer_token).send()?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
+        match self
+            .http
+            .get(&url)
+            .header("Authorization", &self.auth_header_value())
+            .call()
+        {
+            Ok(mut response) => {
+                let user: ScimUser = response.body_mut().read_json()?;
+                Ok(Some(user))
+            }
+            Err(ureq::Error::StatusCode(404)) => Ok(None),
+            Err(e) => Err(e.into()),
         }
-        let user: ScimUser = response.error_for_status()?.json()?;
-        Ok(Some(user))
     }
 
     /// Look up a group by `displayName`.
     pub fn get_group_by_name(&self, name: &str) -> Result<Option<ScimGroup>, ScimError> {
         debug!(name, "SCIM group lookup by name");
         let escaped = escape_filter_value(name);
-        let url = format!(
-            "{}/Groups?filter=displayName eq \"{}\"",
-            self.base_url, escaped
-        );
+        let filter = format!("displayName eq \"{escaped}\"");
+        let url = format!("{}/Groups", self.base_url);
         let resp: ListResponse<ScimGroup> = self
             .http
             .get(&url)
-            .bearer_auth(&self.bearer_token)
-            .send()?
-            .error_for_status()?
-            .json()?;
+            .query_pairs([("filter", &filter)])
+            .header("Authorization", &self.auth_header_value())
+            .call()?
+            .body_mut()
+            .read_json()?;
         Ok(resp.resources.into_iter().next())
     }
 
@@ -169,12 +183,19 @@ impl ScimClient {
         debug!(id, "SCIM group lookup by id");
         let encoded_id = utf8_percent_encode(id, PATH_SEGMENT_ENCODE);
         let url = format!("{}/Groups/{}", self.base_url, encoded_id);
-        let response = self.http.get(&url).bearer_auth(&self.bearer_token).send()?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
+        match self
+            .http
+            .get(&url)
+            .header("Authorization", &self.auth_header_value())
+            .call()
+        {
+            Ok(mut response) => {
+                let group: ScimGroup = response.body_mut().read_json()?;
+                Ok(Some(group))
+            }
+            Err(ureq::Error::StatusCode(404)) => Ok(None),
+            Err(e) => Err(e.into()),
         }
-        let group: ScimGroup = response.error_for_status()?.json()?;
-        Ok(Some(group))
     }
 
     /// List all users, paginating via SCIM `startIndex` + `count`.
@@ -193,14 +214,14 @@ impl ScimClient {
     /// Makes a lightweight request to the Users endpoint with count=0.
     pub fn is_online(&self) -> bool {
         debug!("SCIM health check");
-        let url = format!("{}/Users?count=0", self.base_url);
+        let url = format!("{}/Users", self.base_url);
         let online = self
             .http
             .get(&url)
-            .bearer_auth(&self.bearer_token)
-            .send()
-            .map(|r| r.status().is_success())
-            .unwrap_or(false);
+            .query_pairs([("count", "0")])
+            .header("Authorization", &self.auth_header_value())
+            .call()
+            .is_ok();
         debug!(online, "SCIM health check result");
         online
     }
@@ -220,17 +241,20 @@ impl ScimClient {
         let mut complete = false;
 
         for _page in 0..MAX_PAGINATION_PAGES {
-            let url = format!(
-                "{}/{}?startIndex={}&count={}",
-                self.base_url, resource, start_index, count
-            );
+            let url = format!("{}/{}", self.base_url, resource);
+            let start_str = start_index.to_string();
+            let count_str = count.to_string();
             let resp: ListResponse<T> = self
                 .http
                 .get(&url)
-                .bearer_auth(&self.bearer_token)
-                .send()?
-                .error_for_status()?
-                .json()?;
+                .query_pairs([
+                    ("startIndex", start_str.as_str()),
+                    ("count", count_str.as_str()),
+                ])
+                .header("Authorization", &self.auth_header_value())
+                .call()?
+                .body_mut()
+                .read_json()?;
 
             let fetched = resp.resources.len();
             all.extend(resp.resources);

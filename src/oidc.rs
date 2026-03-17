@@ -5,7 +5,9 @@ use tracing::{debug, info, warn};
 #[derive(Debug, Error)]
 pub enum OidcError {
     #[error("HTTP request failed: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(#[from] ureq::Error),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
     #[error("discovery document missing required field: {0}")]
     MissingField(String),
     #[error("authorization pending — user has not yet completed browser auth")]
@@ -67,7 +69,7 @@ struct TokenErrorResponse {
 
 /// OIDC client for device authorization grant (RFC 8628).
 pub struct OidcClient {
-    http: reqwest::blocking::Client,
+    http: ureq::Agent,
     endpoints: OidcEndpoints,
     client_id: String,
     client_secret: Option<String>,
@@ -95,11 +97,12 @@ impl OidcClient {
             "{}/.well-known/openid-configuration",
             issuer_url.trim_end_matches('/')
         );
-        let http = reqwest::blocking::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .timeout(std::time::Duration::from_secs(10))
-            .build()?;
-        let doc: DiscoveryDocument = http.get(&url).send()?.error_for_status()?.json()?;
+        let config = ureq::Agent::config_builder()
+            .timeout_connect(Some(std::time::Duration::from_secs(5)))
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .build();
+        let http: ureq::Agent = config.into();
+        let doc: DiscoveryDocument = http.get(&url).call()?.body_mut().read_json()?;
 
         let issuer = doc
             .issuer
@@ -137,17 +140,17 @@ impl OidcClient {
     /// POST to device_authorization_endpoint with client_id + scope.
     pub fn request_device_code(&self, scope: &str) -> Result<DeviceAuthResponse, OidcError> {
         info!(scope, "requesting device code");
-        let mut form = vec![("client_id", self.client_id.as_str()), ("scope", scope)];
+        let mut form: Vec<(&str, &str)> =
+            vec![("client_id", self.client_id.as_str()), ("scope", scope)];
         if let Some(ref secret) = self.client_secret {
             form.push(("client_secret", secret.as_str()));
         }
         let resp: DeviceAuthResponse = self
             .http
             .post(&self.endpoints.device_authorization_endpoint)
-            .form(&form)
-            .send()?
-            .error_for_status()?
-            .json()?;
+            .send_form(form)?
+            .body_mut()
+            .read_json()?;
         Ok(resp)
     }
 
@@ -160,7 +163,7 @@ impl OidcClient {
     /// Returns `Err(OidcError::ExpiredToken)` if the code expired.
     pub fn poll_for_token(&self, device_code: &str) -> Result<TokenResponse, OidcError> {
         debug!("polling for token");
-        let mut form = vec![
+        let mut form: Vec<(&str, &str)> = vec![
             ("client_id", self.client_id.as_str()),
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ("device_code", device_code),
@@ -168,19 +171,26 @@ impl OidcClient {
         if let Some(ref secret) = self.client_secret {
             form.push(("client_secret", secret.as_str()));
         }
-        let response = self
+
+        // Disable http_status_as_error so we can inspect 4xx response bodies
+        let result = self
             .http
             .post(&self.endpoints.token_endpoint)
-            .form(&form)
-            .send()?;
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .send_form(form);
 
-        if response.status().is_success() {
-            let token: TokenResponse = response.json()?;
+        let mut response = result?;
+        let status = response.status().as_u16();
+
+        if (200..300).contains(&status) {
+            let token: TokenResponse = response.body_mut().read_json()?;
             return Ok(token);
         }
 
-        // On 400/401, parse the error response to determine the specific error
-        let body = response.text()?;
+        // On 4xx/5xx, parse the error response to determine the specific error
+        let body = response.body_mut().read_to_string()?;
         if let Ok(err_resp) = serde_json::from_str::<TokenErrorResponse>(&body) {
             match err_resp.error.as_str() {
                 "authorization_pending" => return Err(OidcError::AuthorizationPending),
@@ -255,9 +265,9 @@ impl OidcClient {
         let jwks: jsonwebtoken::jwk::JwkSet = self
             .http
             .get(&self.endpoints.jwks_uri)
-            .send()?
-            .error_for_status()?
-            .json()?;
+            .call()?
+            .body_mut()
+            .read_json()?;
 
         // Find the key matching the token's kid
         let jwk = match &header.kid {

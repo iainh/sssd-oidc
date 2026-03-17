@@ -16,7 +16,7 @@ jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 libc = "0.2"
 murmur3 = "0.5"
 percent-encoding = "2"
-reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
+ureq = { version = "3", features = ["json", "rustls"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

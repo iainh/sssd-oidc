@@ -33,8 +33,8 @@ sssd-oidc/              # root crate — shared library (config, SCIM client, ma
 2. **Deterministic UID/GID mapping** — murmur3 hash (seed 0) of external UUID
    into a configurable range. Never use Rust's `DefaultHasher` (not stable
    across compiler versions).
-3. **Blocking HTTP** — `reqwest::blocking` because NSS/PAM callbacks are
-   synchronous C calls.
+3. **Blocking HTTP** — `ureq` (blocking by default) because NSS/PAM callbacks
+   are synchronous C calls.
 4. **SQLite cache** — for UID→external_id reverse lookups; the hash is the
    source of truth, the DB is a cache.
 5. **Offline fallback** — on SCIM errors, fall back to the local SQLite cache
