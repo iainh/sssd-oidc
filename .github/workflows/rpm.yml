@@ -70,7 +70,7 @@ jobs:
       image: registry.access.redhat.com/ubi9/ubi:latest
     steps:
       - name: Install dependencies
-        run: dnf install -y pam sssd-common findutils
+        run: dnf install -y findutils
 
       - name: Download RPM artifact
         uses: actions/download-artifact@v4
@@ -82,7 +82,7 @@ jobs:
         run: |
           RPM=$(find rpms -name 'sssd-oidc-*.rpm' -not -name '*.src.rpm' | head -1)
           echo "Installing: $RPM"
-          rpm -ivh "$RPM"
+          rpm -ivh --nodeps "$RPM"
 
       - name: Verify installed files
         run: |
