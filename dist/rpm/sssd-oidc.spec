@@ -1,5 +1,5 @@
 %global crate sssd-oidc
-%global _version 0.1.0
+%global _version 0.2.0
 
 Name:           sssd-oidc
 Version:        %{_version}
@@ -79,5 +79,8 @@ echo "----------------------------------------------------------------------"
 %dir %attr(0750,root,root) %{_sharedstatedir}/sssd-oidc
 
 %changelog
+* Mon Mar 17 2026 Iain H. <iain@spiralpoint.org> - 0.2.0-1
+- Replace reqwest with ureq for HTTP client
+
 * Mon Mar 16 2026 Iain H. <iain@spiralpoint.org> - 0.1.0-1
 - Initial RPM package
