@@ -54,7 +54,12 @@ pub(crate) fn get_oidc_client() -> Option<&'static OidcClient> {
                     return None;
                 }
             };
-            match OidcClient::discover(
+            let discover_fn = if config.oidc.allow_insecure {
+                OidcClient::discover_insecure
+            } else {
+                OidcClient::discover
+            };
+            match discover_fn(
                 &config.oidc.issuer_url,
                 &config.oidc.client_id,
                 config.oidc.client_secret.as_deref(),

@@ -9,7 +9,7 @@ async fn oidc_discovery_parses_endpoints() {
     let base_url = idp.base_url();
 
     let client = tokio::task::spawn_blocking(move || {
-        OidcClient::discover(&base_url, "test-client-id", None).unwrap()
+        OidcClient::discover_insecure(&base_url, "test-client-id", None).unwrap()
     })
     .await
     .unwrap();
@@ -29,7 +29,7 @@ async fn device_code_flow_succeeds_after_pending() {
 
     let (access_token, token_type, displayed_code, displayed_uri, sub) =
         tokio::task::spawn_blocking(move || {
-            let client = OidcClient::discover(&base_url, "test-client-id", None).unwrap();
+            let client = OidcClient::discover_insecure(&base_url, "test-client-id", None).unwrap();
             let mut displayed_code = String::new();
             let mut displayed_uri = String::new();
             let token = client
@@ -69,7 +69,7 @@ async fn device_code_flow_handles_expired_token() {
     let base_url = idp.base_url();
 
     let result = tokio::task::spawn_blocking(move || {
-        let client = OidcClient::discover(&base_url, "test-client-id", None).unwrap();
+        let client = OidcClient::discover_insecure(&base_url, "test-client-id", None).unwrap();
         client.authenticate_device_flow("openid", |_code, _uri| {})
     })
     .await
@@ -86,7 +86,7 @@ async fn validate_id_token_verifies_signature_and_claims() {
     let base_url = idp.base_url();
 
     let claims = tokio::task::spawn_blocking(move || {
-        let client = OidcClient::discover(&base_url, "test-client-id", None).unwrap();
+        let client = OidcClient::discover_insecure(&base_url, "test-client-id", None).unwrap();
         let token = client
             .authenticate_device_flow("openid", |_, _| {})
             .unwrap();

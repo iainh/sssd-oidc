@@ -10,6 +10,10 @@ pub enum OidcError {
     Io(#[from] std::io::Error),
     #[error("discovery document missing required field: {0}")]
     MissingField(String),
+    #[error("discovery issuer mismatch: expected {expected}, got {actual}")]
+    IssuerMismatch { expected: String, actual: String },
+    #[error("discovery endpoint must use https: {0}")]
+    InsecureEndpoint(String),
     #[error("authorization pending — user has not yet completed browser auth")]
     AuthorizationPending,
     #[error("polling too fast — increase interval")]
@@ -92,11 +96,28 @@ impl OidcClient {
         client_id: &str,
         client_secret: Option<&str>,
     ) -> Result<Self, OidcError> {
+        Self::discover_with_options(issuer_url, client_id, client_secret, true)
+    }
+
+    /// Like [`discover`](Self::discover) but allows disabling the HTTPS
+    /// requirement for local development (e.g. `http://localhost`).
+    pub fn discover_insecure(
+        issuer_url: &str,
+        client_id: &str,
+        client_secret: Option<&str>,
+    ) -> Result<Self, OidcError> {
+        Self::discover_with_options(issuer_url, client_id, client_secret, false)
+    }
+
+    fn discover_with_options(
+        issuer_url: &str,
+        client_id: &str,
+        client_secret: Option<&str>,
+        require_https: bool,
+    ) -> Result<Self, OidcError> {
         info!(issuer_url, "discovering OIDC endpoints");
-        let url = format!(
-            "{}/.well-known/openid-configuration",
-            issuer_url.trim_end_matches('/')
-        );
+        let canonical_issuer = issuer_url.trim_end_matches('/');
+        let url = format!("{canonical_issuer}/.well-known/openid-configuration");
         let config = ureq::Agent::config_builder()
             .timeout_connect(Some(std::time::Duration::from_secs(5)))
             .timeout_global(Some(std::time::Duration::from_secs(10)))
@@ -116,6 +137,31 @@ impl OidcClient {
         let jwks_uri = doc
             .jwks_uri
             .ok_or_else(|| OidcError::MissingField("jwks_uri".into()))?;
+
+        // Validate issuer matches the configured URL (OIDC Discovery §4.3)
+        let canonical_discovered = issuer.trim_end_matches('/');
+        if canonical_discovered != canonical_issuer {
+            return Err(OidcError::IssuerMismatch {
+                expected: canonical_issuer.to_string(),
+                actual: issuer.clone(),
+            });
+        }
+
+        // Enforce HTTPS on all endpoints unless explicitly opted out
+        if require_https {
+            for (name, endpoint) in [
+                ("token_endpoint", &token_endpoint),
+                (
+                    "device_authorization_endpoint",
+                    &device_authorization_endpoint,
+                ),
+                ("jwks_uri", &jwks_uri),
+            ] {
+                if !endpoint.starts_with("https://") {
+                    return Err(OidcError::InsecureEndpoint(format!("{name}: {endpoint}")));
+                }
+            }
+        }
 
         info!(issuer = issuer, "OIDC discovery complete");
         Ok(Self {
@@ -373,5 +419,22 @@ mod tests {
     fn extract_subject_invalid_jwt_format() {
         let err = extract_id_token_subject("not-a-jwt").unwrap_err();
         assert!(err.to_string().contains("not a valid JWT"));
+    }
+
+    #[test]
+    fn issuer_mismatch_error_message() {
+        let err = OidcError::IssuerMismatch {
+            expected: "https://good.example.com".into(),
+            actual: "https://evil.example.com".into(),
+        };
+        assert!(err.to_string().contains("https://good.example.com"));
+        assert!(err.to_string().contains("https://evil.example.com"));
+    }
+
+    #[test]
+    fn insecure_endpoint_error_message() {
+        let err = OidcError::InsecureEndpoint("token_endpoint: http://evil.com/token".into());
+        assert!(err.to_string().contains("https"));
+        assert!(err.to_string().contains("http://evil.com/token"));
     }
 }

@@ -63,6 +63,9 @@ pub struct OidcConfig {
     /// OAuth2 client secret (optional, depends on IdP config).
     #[serde(default)]
     pub client_secret: Option<String>,
+    /// Allow HTTP (non-TLS) endpoints. **Only for local development.**
+    #[serde(default)]
+    pub allow_insecure: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
