@@ -74,6 +74,10 @@ impl Cache {
                 FOREIGN KEY (group_external_id) REFERENCES gid_cache(external_id)
                     ON DELETE CASCADE
             );
+
+            CREATE INDEX IF NOT EXISTS idx_uid_cache_login ON uid_cache(login);
+            CREATE INDEX IF NOT EXISTS idx_gid_cache_name ON gid_cache(name);
+            CREATE INDEX IF NOT EXISTS idx_group_members_member_name ON group_members(member_name);
             ",
         )?;
         Ok(Self { conn, ttl_seconds })
@@ -660,5 +664,21 @@ mod tests {
         cache.purge_expired(86400).unwrap();
 
         assert!(cache.get_user_by_uid(200_042).unwrap().is_some());
+    }
+
+    #[test]
+    fn indexes_exist_after_open() {
+        let cache = Cache::open_in_memory().unwrap();
+        let indexes: Vec<String> = cache
+            .conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(indexes.contains(&"idx_uid_cache_login".to_string()));
+        assert!(indexes.contains(&"idx_gid_cache_name".to_string()));
+        assert!(indexes.contains(&"idx_group_members_member_name".to_string()));
     }
 }
