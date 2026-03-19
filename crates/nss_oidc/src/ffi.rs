@@ -4,7 +4,7 @@ use libc::{c_char, c_int, gid_t, group, passwd, size_t, uid_t};
 
 use crate::group::fill_group;
 use crate::passwd::fill_passwd;
-use crate::state::get_service;
+use crate::state::get_state;
 
 use tracing::{trace, warn};
 
@@ -117,14 +117,14 @@ pub unsafe extern "C" fn _nss_oidc_initgroups_dyn(
     };
     trace!(user = user_str, "initgroups_dyn");
 
-    let svc = match get_service() {
+    let state = match get_state() {
         Some(s) => s,
         None => {
             unsafe { *errnop = 0 };
             return NssStatus::Unavail;
         }
     };
-    let svc = match svc.lock() {
+    let svc = match state.service.lock() {
         Ok(s) => s,
         Err(_) => {
             unsafe { *errnop = 0 };
@@ -189,26 +189,43 @@ pub unsafe extern "C" fn _nss_oidc_initgroups_dyn(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_oidc_setpwent() -> NssStatus {
     trace!("setpwent");
-    let svc = match get_service() {
+    let st = match get_state() {
         Some(s) => s,
         None => return NssStatus::Unavail,
     };
-    let svc = match svc.lock() {
+
+    // Fetch users from SCIM without holding the service mutex
+    let scim_users = match st.scim.list_users() {
+        Ok(u) => u,
+        Err(e) => {
+            warn!(error = %e, "setpwent: SCIM list failed");
+            return NssStatus::Unavail;
+        }
+    };
+
+    // Acquire lock only for cache/mapping operations
+    let svc = match st.service.lock() {
         Ok(s) => s,
         Err(_) => return NssStatus::Unavail,
     };
-    match svc.list_all_users() {
-        Ok(users) => {
-            if let Ok(mut state) = USER_ENUM.lock() {
-                *state = Some((users, 0));
+    let mut users = Vec::with_capacity(scim_users.len());
+    for su in &scim_users {
+        match svc.scim_user_to_model(su) {
+            Ok(user) => {
+                let _ = svc.cache().store_user(&user);
+                users.push(user);
             }
-            NssStatus::Success
-        }
-        Err(e) => {
-            warn!(error = %e, "setpwent failed");
-            NssStatus::Unavail
+            Err(e) => {
+                warn!(error = %e, "setpwent: failed to convert SCIM user");
+            }
         }
     }
+    drop(svc);
+
+    if let Ok(mut enum_state) = USER_ENUM.lock() {
+        *enum_state = Some((users, 0));
+    }
+    NssStatus::Success
 }
 
 /// Return the next user in the enumeration.
@@ -272,26 +289,43 @@ pub unsafe extern "C" fn _nss_oidc_endpwent() -> NssStatus {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_oidc_setgrent() -> NssStatus {
     trace!("setgrent");
-    let svc = match get_service() {
+    let st = match get_state() {
         Some(s) => s,
         None => return NssStatus::Unavail,
     };
-    let svc = match svc.lock() {
+
+    // Fetch groups from SCIM without holding the service mutex
+    let scim_groups = match st.scim.list_groups() {
+        Ok(g) => g,
+        Err(e) => {
+            warn!(error = %e, "setgrent: SCIM list failed");
+            return NssStatus::Unavail;
+        }
+    };
+
+    // Acquire lock only for cache/mapping operations
+    let svc = match st.service.lock() {
         Ok(s) => s,
         Err(_) => return NssStatus::Unavail,
     };
-    match svc.list_all_groups() {
-        Ok(groups) => {
-            if let Ok(mut state) = GROUP_ENUM.lock() {
-                *state = Some((groups, 0));
+    let mut groups = Vec::with_capacity(scim_groups.len());
+    for sg in &scim_groups {
+        match svc.scim_group_to_model(sg) {
+            Ok(group) => {
+                let _ = svc.cache().store_group(&group);
+                groups.push(group);
             }
-            NssStatus::Success
-        }
-        Err(e) => {
-            warn!(error = %e, "setgrent failed");
-            NssStatus::Unavail
+            Err(e) => {
+                warn!(error = %e, "setgrent: failed to convert SCIM group");
+            }
         }
     }
+    drop(svc);
+
+    if let Ok(mut enum_state) = GROUP_ENUM.lock() {
+        *enum_state = Some((groups, 0));
+    }
+    NssStatus::Success
 }
 
 /// Return the next group in the enumeration.

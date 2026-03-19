@@ -27,6 +27,11 @@ impl From<IdRangeExhausted> for ServiceError {
 const MAX_NAME_LEN: usize = 256;
 
 /// Façade used by NSS and PAM modules to resolve users and groups.
+///
+/// `ScimClient` is safe to use without a lock (it is `Send + Sync`), while
+/// `Cache` wraps a `rusqlite::Connection` which requires `&mut`/mutex
+/// protection. The split fields allow callers to perform SCIM network calls
+/// *outside* a mutex scope, then acquire the lock only for cache operations.
 pub struct Service {
     scim: ScimClient,
     cache: Cache,
@@ -44,6 +49,21 @@ impl Service {
             cache,
             config,
         }
+    }
+
+    /// Borrow the SCIM client (lock-free, suitable for network calls).
+    pub fn scim(&self) -> &ScimClient {
+        &self.scim
+    }
+
+    /// Borrow the cache.
+    pub fn cache(&self) -> &Cache {
+        &self.cache
+    }
+
+    /// Borrow the config.
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     /// Look up a user by login name. Tries SCIM first, falls back to cache.
@@ -198,7 +218,11 @@ impl Service {
         }
     }
 
-    fn scim_user_to_model(&self, scim_user: &crate::scim::ScimUser) -> Result<User, ServiceError> {
+    /// Convert a SCIM user to the internal model (requires cache for ID mapping).
+    pub fn scim_user_to_model(
+        &self,
+        scim_user: &crate::scim::ScimUser,
+    ) -> Result<User, ServiceError> {
         let mc = &self.config.mapping;
         let uid = self
             .cache
@@ -228,7 +252,8 @@ impl Service {
         })
     }
 
-    fn scim_group_to_model(
+    /// Convert a SCIM group to the internal model (requires cache for ID mapping).
+    pub fn scim_group_to_model(
         &self,
         scim_group: &crate::scim::ScimGroup,
     ) -> Result<Group, ServiceError> {

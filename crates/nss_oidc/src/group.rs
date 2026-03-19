@@ -4,7 +4,7 @@ pub(crate) mod fill_group {
 
     use crate::ffi::NssStatus;
     use crate::passwd::fill_passwd::write_str;
-    use crate::state::get_service;
+    use crate::state::get_state;
 
     use tracing::{trace, warn};
 
@@ -29,14 +29,14 @@ pub(crate) mod fill_group {
         };
         trace!(name = name_str, "getgrnam_r");
 
-        let svc = match get_service() {
+        let state = match get_state() {
             Some(s) => s,
             None => {
                 unsafe { *errnop = 0 };
                 return NssStatus::Unavail;
             }
         };
-        let svc = match svc.lock() {
+        let svc = match state.service.lock() {
             Ok(s) => s,
             Err(_) => {
                 unsafe { *errnop = 0 };
@@ -70,14 +70,14 @@ pub(crate) mod fill_group {
         buflen: size_t,
         errnop: *mut c_int,
     ) -> NssStatus {
-        let svc = match get_service() {
+        let state = match get_state() {
             Some(s) => s,
             None => {
                 unsafe { *errnop = 0 };
                 return NssStatus::Unavail;
             }
         };
-        let svc = match svc.lock() {
+        let svc = match state.service.lock() {
             Ok(s) => s,
             Err(_) => {
                 unsafe { *errnop = 0 };
