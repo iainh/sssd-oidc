@@ -2,7 +2,7 @@ use thiserror::Error;
 use tracing::{debug, info, warn};
 
 use crate::cache::Cache;
-use crate::config::Config;
+use crate::config::{Config, OfflineAuthPolicy};
 use crate::mapping::IdRangeExhausted;
 use crate::model::{Group, User};
 use crate::scim::{ScimClient, ScimError};
@@ -159,8 +159,10 @@ impl Service {
         Ok(groups)
     }
 
-    /// Check if a user is active. Tries SCIM first, falls back to cache.
-    /// Cached users are assumed active unless explicitly marked inactive.
+    /// Check if a user is active. Tries SCIM first; on SCIM failure,
+    /// behaviour depends on `security.offline_auth_policy`:
+    /// - `cached_status` (default): fall back to cached active status.
+    /// - `deny`: deny access when SCIM is unreachable.
     pub fn check_user_active(&self, name: &str) -> Result<bool, ServiceError> {
         if name.len() > MAX_NAME_LEN {
             return Ok(false);
@@ -174,10 +176,22 @@ impl Service {
             }
             Ok(None) => Ok(false), // user not found → not active
             Err(e) => {
-                warn!(name, error = %e, "SCIM active check failed, falling back to cache");
-                match self.cache.get_user_by_name(name)? {
-                    Some(user) => Ok(user.active),
-                    None => Ok(false),
+                warn!(name, error = %e, "SCIM active check failed");
+                match self.config.security.offline_auth_policy {
+                    OfflineAuthPolicy::CachedStatus => {
+                        debug!(
+                            name,
+                            "using cached status (offline_auth_policy=cached_status)"
+                        );
+                        match self.cache.get_user_by_name(name)? {
+                            Some(user) => Ok(user.active),
+                            None => Ok(false),
+                        }
+                    }
+                    OfflineAuthPolicy::Deny => {
+                        warn!(name, "denying access (offline_auth_policy=deny)");
+                        Ok(false)
+                    }
                 }
             }
         }

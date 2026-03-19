@@ -35,6 +35,26 @@ pub struct Config {
     pub user_defaults: UserDefaultsConfig,
     #[serde(default)]
     pub cache: CacheConfig,
+    #[serde(default)]
+    pub security: SecurityConfig,
+}
+
+/// Policy for account-activity checks when SCIM is unreachable.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OfflineAuthPolicy {
+    /// Use cached active status when SCIM is unreachable (default).
+    #[default]
+    CachedStatus,
+    /// Deny access when SCIM is unreachable.
+    Deny,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SecurityConfig {
+    /// What to do when SCIM is unavailable for account-activity checks.
+    #[serde(default)]
+    pub offline_auth_policy: OfflineAuthPolicy,
 }
 
 #[derive(Debug, Clone, Deserialize)]
