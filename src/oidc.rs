@@ -266,12 +266,14 @@ impl OidcClient {
 
         display_fn(&device_auth.user_code, &device_auth.verification_uri);
 
-        let interval = std::time::Duration::from_secs(device_auth.interval);
+        // RFC 8628 §3.2: clamp to a minimum of 5 seconds
+        const MIN_POLL_INTERVAL_SECS: u64 = 5;
+        let mut interval_secs = device_auth.interval.max(MIN_POLL_INTERVAL_SECS);
         let deadline =
             std::time::Instant::now() + std::time::Duration::from_secs(device_auth.expires_in);
 
         loop {
-            std::thread::sleep(interval);
+            std::thread::sleep(std::time::Duration::from_secs(interval_secs));
 
             if std::time::Instant::now() >= deadline {
                 warn!("device code expired");
@@ -288,8 +290,12 @@ impl OidcClient {
                     continue;
                 }
                 Err(OidcError::SlowDown) => {
-                    debug!("slowing down polling interval");
-                    std::thread::sleep(interval);
+                    // RFC 8628 §3.5: persistently increase the interval
+                    interval_secs += 5;
+                    debug!(
+                        interval_secs,
+                        "slow_down received, increasing poll interval"
+                    );
                     continue;
                 }
                 Err(e) => return Err(e),
