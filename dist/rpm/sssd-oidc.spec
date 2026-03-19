@@ -1,5 +1,5 @@
 %global crate sssd-oidc
-%global _version 0.2.0
+%global _version 0.3.0
 
 Name:           sssd-oidc
 Version:        %{_version}
@@ -79,6 +79,14 @@ echo "----------------------------------------------------------------------"
 %dir %attr(0750,root,root) %{_sharedstatedir}/sssd-oidc
 
 %changelog
+* Wed Mar 19 2026 Iain H. <iain@spiralpoint.org> - 0.3.0-1
+- Add configurable offline auth policy
+- Validate OIDC discovery issuer and enforce HTTPS endpoints
+- Reduce NSS mutex hold time across blocking SCIM calls
+- Harden device-flow polling interval per RFC 8628
+- Add SQLite indexes for frequent lookup columns
+- Fix initgroups duplicate GID detection
+
 * Mon Mar 17 2026 Iain H. <iain@spiralpoint.org> - 0.2.0-1
 - Replace reqwest with ureq for HTTP client
 
