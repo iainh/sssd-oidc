@@ -366,40 +366,35 @@ pub struct IdTokenClaims {
     pub iat: Option<u64>,
 }
 
-/// Decode the payload of a JWT ID token (without cryptographic verification)
-/// and extract the `sub` claim.
-///
-/// We skip signature verification because the token was received over TLS
-/// directly from the IdP's token endpoint.
-pub fn extract_id_token_subject(id_token: &str) -> Result<String, OidcError> {
-    use base64::prelude::*;
-
-    let parts: Vec<&str> = id_token.splitn(3, '.').collect();
-    if parts.len() < 2 {
-        return Err(OidcError::IdTokenDecode("not a valid JWT".into()));
-    }
-
-    let payload_bytes = BASE64_URL_SAFE_NO_PAD
-        .decode(parts[1])
-        .map_err(|e| OidcError::IdTokenDecode(format!("base64: {e}")))?;
-
-    #[derive(Deserialize)]
-    struct Claims {
-        sub: Option<String>,
-    }
-
-    let claims: Claims = serde_json::from_slice(&payload_bytes)
-        .map_err(|e| OidcError::IdTokenDecode(format!("json: {e}")))?;
-
-    claims
-        .sub
-        .ok_or_else(|| OidcError::IdTokenDecode("missing sub claim".into()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use base64::prelude::*;
+
+    /// Decode the payload of a JWT ID token (without cryptographic
+    /// verification) and extract the `sub` claim. Test-only helper.
+    fn extract_id_token_subject(id_token: &str) -> Result<String, OidcError> {
+        let parts: Vec<&str> = id_token.splitn(3, '.').collect();
+        if parts.len() < 2 {
+            return Err(OidcError::IdTokenDecode("not a valid JWT".into()));
+        }
+
+        let payload_bytes = BASE64_URL_SAFE_NO_PAD
+            .decode(parts[1])
+            .map_err(|e| OidcError::IdTokenDecode(format!("base64: {e}")))?;
+
+        #[derive(serde::Deserialize)]
+        struct Claims {
+            sub: Option<String>,
+        }
+
+        let claims: Claims = serde_json::from_slice(&payload_bytes)
+            .map_err(|e| OidcError::IdTokenDecode(format!("json: {e}")))?;
+
+        claims
+            .sub
+            .ok_or_else(|| OidcError::IdTokenDecode("missing sub claim".into()))
+    }
 
     fn make_jwt(claims_json: &str) -> String {
         let header = BASE64_URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256"}"#);
