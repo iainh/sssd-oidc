@@ -143,7 +143,6 @@ pub unsafe extern "C" fn _nss_oidc_initgroups_dyn(
 
     unsafe {
         let groups_buf = *groupsp;
-        let cur_start = *start as usize;
         let cur_size = *size as usize;
 
         for gid in gids {
@@ -151,8 +150,9 @@ pub unsafe extern "C" fn _nss_oidc_initgroups_dyn(
             if gid == group {
                 continue;
             }
+            // Scan all entries including ones appended by this call
             let mut already_present = false;
-            for i in 0..cur_start {
+            for i in 0..(*start as usize) {
                 if *groups_buf.add(i) == gid {
                     already_present = true;
                     break;
